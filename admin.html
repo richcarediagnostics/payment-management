@@ -397,7 +397,7 @@ function filteredRecords(){
     if(to && r.createdAt.slice(0,10) > to) return false;
     if(term){
       const hay = [
-        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.officerName, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
+        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
         ...(r.tests || []).map(t => t.name),
         ...(r.payments || []).map(p => p.mode)
       ].join(" ").toLowerCase();
@@ -538,6 +538,11 @@ function openDetail(id){
     <dl class="kv-grid" style="margin-bottom:18px;">
       <dt>Patient</dt><dd>${escapeHtml(rec.patientName)}</dd>
       <dt>Phone</dt><dd>${rec.patientPhone ? escapeHtml(rec.patientPhone) : "—"}</dd>
+      <dt>Age / Sex</dt><dd>${rec.patientAge ?? "—"} / ${escapeHtml(rec.patientSex || "—")}</dd>
+      <dt>LMP</dt><dd>${rec.lmpDate ? fmtDate(rec.lmpDate) : "—"}</dd>
+      <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
+      <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
+      <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
       <dt>Tests</dt><dd>${(rec.tests||[]).map(t => `${escapeHtml(t.name)} (${fmtNaira(t.price)})`).join(", ")}</dd>
       <dt>Total</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
       <dt>Paid</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>

@@ -83,9 +83,15 @@
           </div>
         </div>
 
-        <div class="field">
-          <label for="officerName">Officer's name</label>
-          <input type="text" id="officerName" placeholder="Name of attending or referring officer" autocomplete="off">
+        <div class="field-row">
+          <div class="field">
+            <label for="referrerPhone">Referrer phone number <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+            <input type="tel" id="referrerPhone" placeholder="e.g. 08012345678" autocomplete="tel">
+          </div>
+          <div class="field">
+            <label for="officerName">Officer's name</label>
+            <input type="text" id="officerName" placeholder="Name of attending or referring officer" autocomplete="off">
+          </div>
         </div>
 
         <div class="field test-search-wrap">
@@ -297,7 +303,7 @@ function resetNewRecordForm(){
   renderChips();
   $("#patientName").value = ""; $("#patientPhone").value = "";
   $("#patientAge").value = ""; $("#patientSex").value = "";
-  $("#lmpDate").value = ""; $("#hospitalReferrer").value = ""; $("#officerName").value = "";
+  $("#lmpDate").value = ""; $("#hospitalReferrer").value = ""; $("#referrerPhone").value = ""; $("#officerName").value = "";
   $("#amountPaid").value = ""; $("#paymentMode").value = "";
   $("#pledgeDate").value = ""; $("#notes").value = "";
   $("#pledgeRow").style.display = "none";
@@ -323,6 +329,7 @@ async function saveNewRecord(){
   const patientSex = $("#patientSex").value;
   const lmpDate = $("#lmpDate").value || null;
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
+  const referrerPhone = $("#referrerPhone").value.trim();
   const officerName = $("#officerName").value.trim();
   const total = currentTotal();
   let amountPaid = Number($("#amountPaid").value) || 0;
@@ -348,7 +355,7 @@ async function saveNewRecord(){
 
   const data = {
     receiptNo, patientName, patientPhone, patientAge, patientSex, lmpDate,
-    hospitalReferrer, officerName,
+    hospitalReferrer, referrerPhone, officerName,
     tests: selectedTests.map(t => ({name: t.name, price: t.price})),
     totalAmount: total, amountPaid, balance, status,
     pledgeDate: balance > 0 ? pledgeDate : null,
@@ -379,6 +386,7 @@ function printEnteredFullInfo(){
   const patientSex = $("#patientSex").value;
   const lmpDate = $("#lmpDate").value || null;
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
+  const referrerPhone = $("#referrerPhone").value.trim();
   const officerName = $("#officerName").value.trim();
   const notes = $("#notes").value.trim();
 
@@ -396,6 +404,7 @@ function printEnteredFullInfo(){
     patientSex,
     lmpDate,
     hospitalReferrer,
+    referrerPhone,
     officerName,
     tests: selectedTests.map(t => ({name: t.name, price: t.price})),
     notes,
@@ -470,6 +479,7 @@ function fullInfoHtml(rec){
         <div><span>Sex</span><strong>${escapeHtml(rec.patientSex || "—")}</strong></div>
         <div><span>LMP (Last Menstrual Period)</span><strong>${rec.lmpDate ? fmtDate(rec.lmpDate) : "—"}</strong></div>
         <div><span>Hospital / referrer</span><strong>${escapeHtml(rec.hospitalReferrer || "—")}</strong></div>
+        <div><span>Referrer phone number</span><strong>${escapeHtml(rec.referrerPhone || "—")}</strong></div>
         <div class="wide"><span>Officer's name</span><strong>${escapeHtml(rec.officerName || "—")}</strong></div>
       </div>
       <div class="full-info-section">
@@ -519,6 +529,7 @@ function renderLookupResult(rec){
         <dt>Patient</dt><dd>${escapeHtml(rec.patientName)}</dd>
         <dt>Age / Sex</dt><dd>${rec.patientAge ?? "—"} / ${escapeHtml(rec.patientSex || "—")}</dd>
         <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
+        <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
         <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
         <dt>Total</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
         <dt>Paid so far</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
