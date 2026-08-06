@@ -1,11 +1,11 @@
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAW9HnhQ9ie15qHz_Am254ehDdlKbWBTSI",
-  authDomain: "richcare-50c80.firebaseapp.com",
-  projectId: "richcare-50c80",
-  storageBucket: "richcare-50c80.firebasestorage.app",
-  messagingSenderId: "1038408232672",
-  appId: "1:1038408232672:web:00ec243813cd75bbf86a85"
+  apiKey: "AIzaSyDAaSxdKGhgLLJsuoYbaeye4rukE31o1p8",
+  authDomain: "paymentmanagement-4355e.firebaseapp.com",
+  projectId: "paymentmanagement-4355e",
+  storageBucket: "paymentmanagement-4355e.firebasestorage.app",
+  messagingSenderId: "258310168537",
+  appId: "1:258310168537:web:92841de1475fa1f84403c8"
 };
 // ============================================================================
 
