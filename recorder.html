@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recorder - RichCare Medical Services</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="loadingScreen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;">
+  <div style="text-align:center;"><div class="loading-spinner"></div><div class="hint">Loading…</div></div>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="top">
+    <div class="top-inner">
+      <div class="top-row">
+        <div class="brand">
+         
+          <h1 id="clinicNameDisplay">RICHCARE MEDICAL SERVICES</h1>
+        </div>
+        <div class="who">
+          <span id="userEmailDisplay"></span>
+          <span class="role-badge" id="roleBadge">recorder</span>
+          <button class="btn btn-ghost btn-small" id="logoutBtn">Sign out</button>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="new" role="tab">New record</button>
+        <button class="tab-btn" data-tab="payment" role="tab">Add payment</button>
+      </nav>
+    </div>
+  </header>
+
+  <div class="shell">
+
+    <!-- ---------- NEW RECORD ---------- -->
+    <section class="tab-panel active" id="panel-new">
+      <div class="panel-head">
+        <h2>Record a payment</h2>
+        <div class="sub">Add the patient, select tests, and log what was paid today.</div>
+      </div>
+
+      <div class="card card-pad">
+        <div class="field-row">
+          <div class="field">
+            <label for="patientName">Patient name</label>
+            <input type="text" id="patientName" placeholder="e.g. Adaeze Okonkwo" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="patientPhone">Phone number <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+            <input type="tel" id="patientPhone" placeholder="e.g. 0803 000 0000" autocomplete="off">
+          </div>
+        </div>
+
+        <div class="field test-search-wrap">
+          <label for="testSearch">Diagnostic tests</label>
+          <input type="text" id="testSearch" placeholder="Search tests — e.g. malaria, full blood count..." autocomplete="off">
+          <div id="testResults"></div>
+        </div>
+        <div class="chip-list" id="chipList"></div>
+        <div class="total-strip">
+          <span class="label">Total due</span>
+          <span class="amount mono" id="totalAmountDisplay">₦0</span>
+        </div>
+
+        <div class="field-row" style="margin-top:20px;">
+          <div class="field">
+            <label for="amountPaid">Amount paid now</label>
+            <input type="number" id="amountPaid" min="0" step="1" placeholder="0">
+            <div class="hint">Leave at 0 if the patient hasn't paid anything yet.</div>
+          </div>
+          <div class="field">
+            <label for="paymentMode">Payment mode</label>
+            <select id="paymentMode">
+              <option value="">— select —</option>
+              <option>Cash</option>
+              <option>Card</option>
+              <option>Bank transfer</option>
+              <option>POS</option>
+              <option>Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="field-row" id="pledgeRow" style="display:none;">
+          <div class="field">
+            <label for="balanceDisplay">Balance</label>
+            <input type="text" id="balanceDisplay" class="mono" disabled style="background:#F0F2F1;">
+          </div>
+          <div class="field">
+            <label for="pledgeDate">Pledged payment date</label>
+            <input type="date" id="pledgeDate">
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="notes">Notes <span style="text-transform:none;font-weight:400;">(optional)</span></label>
+          <textarea id="notes" rows="2" placeholder="Anything worth remembering about this visit"></textarea>
+        </div>
+
+        <div style="display:flex;gap:10px;margin-top:8px;">
+          <button class="btn btn-primary" id="saveRecordBtn">Save &amp; print receipt</button>
+          <button class="btn btn-ghost" id="resetFormBtn">Clear form</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- ADD PAYMENT (BY RECEIPT NO.) ---------- -->
+    <section class="tab-panel" id="panel-payment">
+      <div class="panel-head">
+        <h2>Add a payment</h2>
+        <div class="sub">Enter the receipt number from the patient's slip to log a follow-up payment against it.</div>
+      </div>
+
+      <div class="card card-pad">
+        <div class="field-row">
+          <div class="field" style="flex:1;">
+            <label for="lookupReceiptNo">Receipt number</label>
+            <input type="text" id="lookupReceiptNo" placeholder="e.g. DX-000123" class="mono" autocomplete="off">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="lookupBtn">Look up receipt</button>
+        <div id="lookupResult" class="lookup-result"></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { db } from "./firebase-config.js";
+import { requireRole, logout } from "./auth-guard.js";
+import {
+  collection, addDoc, getDocs, doc, updateDoc, getDoc, setDoc, runTransaction
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const $ = (sel) => document.querySelector(sel);
+let diagnostics = [];
+let selectedTests = [];
+let currentUser = null;
+
+const fmtNaira = (n) => "₦" + Number(n || 0).toLocaleString("en-NG", {maximumFractionDigits:0});
+const fmtDate = (isoOrDate) => {
+  if(!isoOrDate) return "—";
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if(isNaN(d)) return "—";
+  return d.toLocaleDateString("en-GB", {day:"2-digit", month:"short", year:"numeric"});
+};
+function escapeHtml(str){
+  return String(str ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+}
+function toast(msg, isErr){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isErr);
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
+}
+
+/* ---------------- boot / auth ---------------- */
+(async function init(){
+  const { user, role, email, displayName } = await requireRole(["recorder"]);
+  currentUser = { uid: user.uid, email, displayName };
+  $("#userEmailDisplay").textContent = email;
+  $("#roleBadge").textContent = role;
+  $("#logoutBtn").addEventListener("click", logout);
+
+  await applyClinicName();
+  await loadDiagnostics();
+
+  $("#loadingScreen").style.display = "none";
+  $("#app").style.display = "block";
+})();
+
+async function applyClinicName(){
+  try{
+    const snap = await getDoc(doc(db, "settings", "general"));
+    $("#clinicNameDisplay").textContent = snap.exists() && snap.data().clinicName ? snap.data().clinicName : "Diagnostics Center";
+  }catch(e){ /* fall back to default silently */ }
+}
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + btn.dataset.tab));
+  });
+});
+
+/* ---------------- diagnostics / test search ---------------- */
+async function loadDiagnostics(){
+  const snap = await getDocs(collection(db, "diagnostics"));
+  diagnostics = snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.name.localeCompare(b.name));
+}
+
+const testSearchInput = $("#testSearch");
+const testResultsBox = $("#testResults");
+testSearchInput.addEventListener("input", () => {
+  const q = testSearchInput.value.trim().toLowerCase();
+  if(!q){ testResultsBox.classList.remove("show"); testResultsBox.innerHTML = ""; return; }
+  const matches = diagnostics.filter(t => t.name.toLowerCase().includes(q) && !selectedTests.some(s => s.id === t.id)).slice(0, 30);
+  testResultsBox.innerHTML = matches.length ? matches.map(t => `
+    <div class="test-result-item" data-id="${t.id}"><span>${escapeHtml(t.name)}</span><span class="price mono">${fmtNaira(t.price)}</span></div>
+  `).join("") : '<div class="test-result-empty">No matching tests. Ask an admin to add it under "Manage tests".</div>';
+  testResultsBox.querySelectorAll(".test-result-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const t = diagnostics.find(d => d.id === el.dataset.id);
+      if(t){ selectedTests.push(t); renderChips(); }
+      testSearchInput.value = "";
+      testResultsBox.classList.remove("show");
+      testResultsBox.innerHTML = "";
+      testSearchInput.focus();
+    });
+  });
+  testResultsBox.classList.add("show");
+});
+document.addEventListener("click", (e) => {
+  if(!e.target.closest(".test-search-wrap")){ testResultsBox.classList.remove("show"); }
+});
+
+function renderChips(){
+  $("#chipList").innerHTML = selectedTests.map((t, idx) => `
+    <span class="chip">${escapeHtml(t.name)} <span class="price">${fmtNaira(t.price)}</span>
+      <button data-idx="${idx}" aria-label="Remove ${escapeHtml(t.name)}">&times;</button></span>
+  `).join("");
+  $("#chipList").querySelectorAll("button").forEach(b => {
+    b.addEventListener("click", () => { selectedTests.splice(Number(b.dataset.idx), 1); renderChips(); });
+  });
+  updateTotals();
+}
+function currentTotal(){ return selectedTests.reduce((sum, t) => sum + Number(t.price || 0), 0); }
+function updateTotals(){
+  $("#totalAmountDisplay").textContent = fmtNaira(currentTotal());
+  recomputeBalanceUI();
+}
+function recomputeBalanceUI(){
+  const total = currentTotal();
+  const paid = Number($("#amountPaid").value) || 0;
+  const balance = Math.max(total - paid, 0);
+  if(balance > 0 && total > 0){
+    $("#pledgeRow").style.display = "grid";
+    $("#balanceDisplay").value = fmtNaira(balance);
+  } else {
+    $("#pledgeRow").style.display = "none";
+  }
+}
+$("#amountPaid").addEventListener("input", recomputeBalanceUI);
+$("#resetFormBtn").addEventListener("click", resetNewRecordForm);
+function resetNewRecordForm(){
+  selectedTests = [];
+  renderChips();
+  $("#patientName").value = ""; $("#patientPhone").value = "";
+  $("#amountPaid").value = ""; $("#paymentMode").value = "";
+  $("#pledgeDate").value = ""; $("#notes").value = "";
+  $("#pledgeRow").style.display = "none";
+}
+
+/* ---------------- save new record ---------------- */
+async function nextReceiptNo(){
+  const ref = doc(db, "meta", "counter");
+  const num = await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    const next = (snap.exists() ? (snap.data().count || 0) : 0) + 1;
+    tx.set(ref, {count: next});
+    return next;
+  });
+  return "DX-" + String(num).padStart(6, "0");
+}
+
+$("#saveRecordBtn").addEventListener("click", async () => {
+  const patientName = $("#patientName").value.trim();
+  const patientPhone = $("#patientPhone").value.trim();
+  const total = currentTotal();
+  let amountPaid = Number($("#amountPaid").value) || 0;
+  const paymentMode = $("#paymentMode").value;
+  const pledgeDate = $("#pledgeDate").value;
+  const notes = $("#notes").value.trim();
+
+  if(!patientName){ toast("Enter the patient's name", true); return; }
+  if(selectedTests.length === 0){ toast("Select at least one diagnostic test", true); return; }
+  if(amountPaid > total) amountPaid = total;
+  if(amountPaid > 0 && !paymentMode){ toast("Select a payment mode", true); return; }
+  const balance = Math.max(total - amountPaid, 0);
+  if(balance > 0 && !pledgeDate){ toast("Add a pledged payment date for the balance", true); return; }
+
+  const status = balance <= 0 ? "paid" : (amountPaid > 0 ? "partial" : "unpaid");
+  const receiptNo = await nextReceiptNo();
+  const nowIso = new Date().toISOString();
+  const payments = amountPaid > 0 ? [{amount: amountPaid, mode: paymentMode, date: nowIso, note: "Initial payment"}] : [];
+
+  const data = {
+    receiptNo, patientName, patientPhone,
+    tests: selectedTests.map(t => ({name: t.name, price: t.price})),
+    totalAmount: total, amountPaid, balance, status,
+    pledgeDate: balance > 0 ? pledgeDate : null,
+    notes, payments,
+    recordedBy: currentUser.email,
+    recordedByName: currentUser.displayName,
+    createdAt: nowIso, updatedAt: nowIso
+  };
+
+  try{
+    await setDoc(doc(db, "records", receiptNo), data);
+    toast("Record saved — " + receiptNo);
+    printReceipt(data);
+    resetNewRecordForm();
+  }catch(e){
+    console.error(e);
+    toast("Couldn't save the record. Check your connection.", true);
+  }
+});
+
+/* ---------------- receipt print (2 copies, A4, dashed cut line) ---------------- */
+function receiptHtml(rec, copyLabel){
+  const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
+  const testsRows = rec.tests.map(t => `<div class="row"><span>${escapeHtml(t.name)}</span><span class="p">${fmtNaira(t.price)}</span></div>`).join("");
+  return `
+    <div class="receipt">
+      <div class="receipt-top">
+        <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
+        <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
+      </div>
+      <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
+      ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
+      <div class="receipt-tests">${testsRows}</div>
+      <div class="receipt-totals">
+        <div class="row"><span>Total</span><span class="v">${fmtNaira(rec.totalAmount)}</span></div>
+        <div class="row"><span>Paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
+        <div class="row bold"><span>Balance</span><span class="v">${fmtNaira(rec.balance)}</span></div>
+      </div>
+      ${rec.balance > 0 ? `<div class="receipt-pledge">Balance of ${fmtNaira(rec.balance)} pledged for ${fmtDate(rec.pledgeDate)}</div>` : ""}
+      <div class="receipt-signature">
+        <div class="sig-name">${escapeHtml(rec.recordedByName || rec.recordedBy || "")}</div>
+        <div class="sig-line"></div>
+        <div class="sig-label">Recorded by</div>
+      </div>
+      <div class="receipt-foot">Thank you. Please keep this receipt for your records.</div>
+    </div>
+  `;
+}
+function printReceipt(rec){
+  $("#printArea").innerHTML = `
+    <div class="print-page">
+      <div class="print-copy">${receiptHtml(rec, "Customer copy")}</div>
+      <div class="cut-line"><span>&#9986; cut here</span></div>
+      <div class="print-copy">${receiptHtml(rec, "Company copy")}</div>
+    </div>
+  `;
+  window.print();
+}
+
+/* ---------------- add payment by receipt number ---------------- */
+$("#lookupBtn").addEventListener("click", async () => {
+  const receiptNo = $("#lookupReceiptNo").value.trim().toUpperCase();
+  const resultBox = $("#lookupResult");
+  if(!receiptNo){ toast("Enter a receipt number", true); return; }
+  resultBox.innerHTML = '<div class="hint">Looking up…</div>';
+  try{
+    const snap = await getDoc(doc(db, "records", receiptNo));
+    if(!snap.exists()){
+      resultBox.innerHTML = '<div class="empty-state"><div class="display">No record found</div><div>Double check the receipt number and try again.</div></div>';
+      return;
+    }
+    renderLookupResult({id: snap.id, ...snap.data()});
+  }catch(e){
+    console.error(e);
+    resultBox.innerHTML = '<div class="setup-error" style="display:block;">Couldn\'t look that up. Check your connection.</div>';
+  }
+});
+
+function renderLookupResult(rec){
+  const resultBox = $("#lookupResult");
+  resultBox.innerHTML = `
+    <div class="card card-pad" style="margin-top:4px;">
+      <dl class="kv-grid" style="margin-bottom:14px;">
+        <dt>Patient</dt><dd>${escapeHtml(rec.patientName)}</dd>
+        <dt>Total</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
+        <dt>Paid so far</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
+        <dt>Balance</dt><dd class="mono">${fmtNaira(rec.balance)}</dd>
+        <dt>Status</dt><dd><span class="status-pill status-${rec.status}">${rec.status}</span></dd>
+        <dt>Pledge date</dt><dd>${rec.pledgeDate ? fmtDate(rec.pledgeDate) : "—"}</dd>
+      </dl>
+      ${rec.balance > 0 ? `
+        <div style="border-top:1px solid var(--line);padding-top:14px;">
+          <div style="font-weight:600;margin-bottom:10px;">Log a new payment</div>
+          <div class="field-row">
+            <div class="field"><label>Amount</label><input type="number" id="payAmount" min="0" max="${rec.balance}" placeholder="0"></div>
+            <div class="field"><label>Mode</label>
+              <select id="payMode">
+                <option value="">— select —</option>
+                <option>Cash</option><option>Card</option><option>Bank transfer</option><option>POS</option><option>Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="field" id="payPledgeField"><label>New pledge date (if balance remains)</label><input type="date" id="payPledge"></div>
+          <button class="btn btn-primary" id="submitPaymentBtn">Log payment &amp; print receipt</button>
+        </div>
+      ` : `<div class="hint">This receipt is fully paid — nothing left to log.</div>`}
+    </div>
+  `;
+  const submitBtn = document.getElementById("submitPaymentBtn");
+  if(submitBtn){
+    submitBtn.addEventListener("click", () => addPaymentToRecord(rec));
+  }
+}
+
+async function addPaymentToRecord(rec){
+  const amount = Number(document.getElementById("payAmount").value) || 0;
+  const mode = document.getElementById("payMode").value;
+  const pledge = document.getElementById("payPledge").value;
+  if(amount <= 0){ toast("Enter a payment amount", true); return; }
+  if(!mode){ toast("Select a payment mode", true); return; }
+  const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
+  const newBalance = Math.max(rec.totalAmount - newPaid, 0);
+  if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
+  const status = newBalance <= 0 ? "paid" : "partial";
+  const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
+  const updated = {
+    ...rec,
+    amountPaid: newPaid, balance: newBalance, status,
+    pledgeDate: newBalance > 0 ? pledge : null,
+    payments, updatedAt: new Date().toISOString()
+  };
+  try{
+    await updateDoc(doc(db, "records", rec.id), {
+      amountPaid: newPaid, balance: newBalance, status,
+      pledgeDate: newBalance > 0 ? pledge : null,
+      payments, updatedAt: new Date().toISOString()
+    });
+    toast("Payment logged");
+    printReceipt(updated);
+    document.getElementById("lookupResult").innerHTML = "";
+    $("#lookupReceiptNo").value = "";
+  }catch(e){
+    console.error(e);
+    toast("Couldn't save the payment", true);
+  }
+}
+</script>
+</body>
+</html>

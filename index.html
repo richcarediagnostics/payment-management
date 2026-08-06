@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sign in - RichCare Medical Services</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="loadingScreen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;">
+  <div style="text-align:center;"><div class="loading-spinner"></div><div class="hint">Loading…</div></div>
+</div>
+
+<div id="configScreen">
+  <div class="center-wrap">
+    <div class="setup-card">
+      <div class="setup-eyebrow">Configuration needed</div>
+      <h1>Add your Firebase config to the code</h1>
+      <p>This app expects your Firebase project details to be written directly into <span class="mono">firebase-config.js</span>.</p>
+      <div class="setup-steps">
+        <strong>See SETUP.md</strong>
+        <ol>
+          <li>Create a Firebase project and enable Email/Password authentication</li>
+          <li>Enable Firestore, and create your first super admin account</li>
+          <li>Edit the <span class="mono">firebaseConfig</span> object at the top of <span class="mono">firebase-config.js</span></li>
+          <li>Reload this page</li>
+        </ol>
+      </div>
+      <div class="setup-error">Full step-by-step instructions are in SETUP.md, included alongside this file.</div>
+    </div>
+  </div>
+</div>
+
+<div id="app">
+  <div class="center-wrap">
+    <div class="setup-card">
+      <div class="setup-eyebrow">Sign in</div>
+      <h1 id="clinicNameDisplay">RICHCARE MEDICAL SERVICES</h1>
+      <p>Sign in with the account your super admin created for you.</p>
+
+      <form id="loginForm" style="margin-top:20px;">
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password" required>
+        </div>
+        <div class="setup-error" id="loginError" style="display:none;"></div>
+        <button type="submit" class="btn btn-primary btn-block" id="loginBtn" style="margin-top:6px;">Sign in</button>
+      </form>
+      <p class="hint" style="margin-top:16px;">No account? Only a super admin can register new admin or recorder accounts.</p>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { db, auth, isConfigPlaceholder } from "./firebase-config.js";
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import { doc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+const $ = (sel) => document.querySelector(sel);
+
+function toast(msg, isErr){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isErr);
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
+}
+
+function redirectForRole(role){
+  if(role === "recorder") location.href = "recorder.html";
+  else if(role === "admin" || role === "superadmin") location.href = "admin.html";
+  else { toast("Your account has no recognised role. Contact your super admin.", true); }
+}
+
+async function boot(){
+  if(isConfigPlaceholder()){
+    $("#loadingScreen").style.display = "none";
+    $("#configScreen").style.display = "block";
+    return;
+  }
+  onAuthStateChanged(auth, async (user) => {
+    $("#loadingScreen").style.display = "none";
+    if(user){
+      $("#app").style.display = "none";
+      try{
+        const roleSnap = await getDoc(doc(db, "users", user.uid));
+        if(!roleSnap.exists()){
+          await signOut(auth);
+          $("#app").style.display = "block";
+          showError("Your account isn't set up yet. Contact your super admin.");
+          return;
+        }
+        redirectForRole(roleSnap.data().role);
+      }catch(e){
+        console.error(e);
+        await signOut(auth);
+        $("#app").style.display = "block";
+        showError("Couldn't verify your account. Please try again.");
+      }
+    } else {
+      $("#app").style.display = "block";
+    }
+  });
+}
+
+function showError(msg){
+  $("#loginError").style.display = "block";
+  $("#loginError").textContent = msg;
+}
+
+$("#loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("#loginError").style.display = "none";
+  const email = $("#email").value.trim();
+  const password = $("#password").value;
+  $("#loginBtn").disabled = true;
+  $("#loginBtn").textContent = "Signing in…";
+  try{
+    await signInWithEmailAndPassword(auth, email, password);
+    // onAuthStateChanged above handles the redirect
+  }catch(err){
+    console.error(err);
+    showError("Incorrect email or password.");
+  }finally{
+    $("#loginBtn").disabled = false;
+    $("#loginBtn").textContent = "Sign in";
+  }
+});
+
+boot();
+</script>
+</body>
+</html>

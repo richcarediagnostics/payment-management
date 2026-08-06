@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create user - RichCare Medical Services</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<style>
+  .radio-group{display:flex;gap:12px;}
+  .radio-option{
+    flex:1;display:flex;align-items:center;gap:8px;border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;cursor:pointer;font-size:14px;font-weight:600;
+    color:var(--ink-soft);background:#FCFDFC;
+  }
+  .radio-option:has(input:checked){border-color:var(--teal);background:var(--teal-tint);color:var(--teal-deep);}
+  .radio-option input{width:auto;margin:0;}
+  .success-box{text-align:center;padding:8px 0;}
+  .success-box .display{font-size:20px;margin-bottom:6px;}
+</style>
+</head>
+<body>
+
+<div id="loadingScreen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;">
+  <div style="text-align:center;"><div class="loading-spinner"></div><div class="hint">Loading…</div></div>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="top">
+    <div class="top-inner">
+      <div class="top-row">
+        <div class="brand">
+          <h1>RICHCARE MEDICAL SERVICES</h1>
+        </div>
+        <div class="who">
+          <span id="userEmailDisplay"></span>
+          <span class="role-badge">superadmin</span>
+          <button class="btn btn-ghost btn-small" id="logoutBtn">Sign out</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <div class="shell" style="max-width:640px;">
+    <div class="panel-head">
+      <a href="admin.html" class="hint" style="text-decoration:none;">&larr; Back to admin dashboard</a>
+      <h2 style="margin-top:8px;">Create a user</h2>
+      <div class="sub">Register a new recorder or admin account.</div>
+    </div>
+
+    <div class="card card-pad">
+      <div id="formView">
+        <div class="field">
+          <label for="fullName">Full name</label>
+          <input type="text" id="fullName" placeholder="e.g. Chidinma Eze" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="phone">Phone number</label>
+          <input type="tel" id="phone" placeholder="e.g. 0803 000 0000" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="email">Email</label>
+          <input type="email" id="email" placeholder="name@example.com" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="password">Temporary password</label>
+          <input type="text" id="password" placeholder="At least 6 characters" class="mono" autocomplete="off">
+        </div>
+        <div class="field">
+          <label>Role</label>
+          <div class="radio-group">
+            <label class="radio-option">
+              <input type="radio" name="role" value="recorder" checked>
+              Recorder
+            </label>
+            <label class="radio-option">
+              <input type="radio" name="role" value="admin">
+              Admin
+            </label>
+          </div>
+        </div>
+        <div class="setup-error" id="formError" style="display:none;"></div>
+        <div class="hint" style="margin:10px 0 16px;">Share this password with them directly and ask them to sign in. You can send a password reset link any time from the Manage Users list.</div>
+        <button class="btn btn-primary btn-block" id="createBtn">Create user</button>
+      </div>
+
+      <div id="successView" style="display:none;">
+        <div class="success-box">
+          <div class="display" id="successMessage"></div>
+          <div class="hint" style="margin-bottom:20px;">They can now sign in at the login page with the email and password you set.</div>
+          <div style="display:flex;gap:10px;justify-content:center;">
+            <button class="btn btn-primary" id="createAnotherBtn">Create another</button>
+            <a href="admin.html" class="btn btn-ghost">Back to admin dashboard</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { db, getSecondaryAuth } from "./firebase-config.js";
+import { requireRole, logout } from "./auth-guard.js";
+import { doc, setDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  createUserWithEmailAndPassword, signOut as secondarySignOut
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const $ = (sel) => document.querySelector(sel);
+let currentEmail = null;
+
+function toast(msg, isErr){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isErr);
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
+}
+function showError(msg){
+  $("#formError").style.display = "block";
+  $("#formError").textContent = msg;
+}
+
+(async function init(){
+  const { email } = await requireRole(["superadmin"]);
+  currentEmail = email;
+  $("#userEmailDisplay").textContent = email;
+  $("#logoutBtn").addEventListener("click", logout);
+  $("#loadingScreen").style.display = "none";
+  $("#app").style.display = "block";
+})();
+
+$("#createBtn").addEventListener("click", async () => {
+  $("#formError").style.display = "none";
+  const displayName = $("#fullName").value.trim();
+  const phone = $("#phone").value.trim();
+  const email = $("#email").value.trim();
+  const password = $("#password").value;
+  const role = document.querySelector('input[name="role"]:checked').value;
+
+  if(!displayName){ showError("Enter a full name"); return; }
+  if(!phone){ showError("Enter a phone number"); return; }
+  if(!email){ showError("Enter an email"); return; }
+  if(!password || password.length < 6){ showError("Password must be at least 6 characters"); return; }
+
+  $("#createBtn").disabled = true;
+  $("#createBtn").textContent = "Creating…";
+
+  const secAuth = getSecondaryAuth();
+  try{
+    const cred = await createUserWithEmailAndPassword(secAuth, email, password);
+    const uid = cred.user.uid;
+    await setDoc(doc(db, "users", uid), {
+      email, displayName, phone, role,
+      createdAt: new Date().toISOString(),
+      createdBy: currentEmail
+    });
+    await secondarySignOut(secAuth); // cleans up the secondary session only — doesn't touch the super admin's own login
+
+    $("#formView").style.display = "none";
+    $("#successView").style.display = "block";
+    $("#successMessage").textContent = `${displayName} was registered as ${role}`;
+  }catch(e){
+    console.error(e);
+    if(e.code === "auth/email-already-in-use"){ showError("That email is already registered"); }
+    else if(e.code === "auth/weak-password"){ showError("Password is too weak"); }
+    else { showError("Couldn't create the account. Check your connection."); }
+  }finally{
+    $("#createBtn").disabled = false;
+    $("#createBtn").textContent = "Create user";
+  }
+});
+
+$("#createAnotherBtn").addEventListener("click", () => {
+  $("#fullName").value = ""; $("#phone").value = ""; $("#email").value = ""; $("#password").value = "";
+  document.querySelector('input[name="role"][value="recorder"]').checked = true;
+  $("#successView").style.display = "none";
+  $("#formView").style.display = "block";
+});
+</script>
+</body>
+</html>

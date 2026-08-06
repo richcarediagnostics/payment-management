@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — RichCare Medical Services</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Caveat:wght@600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<div id="loadingScreen" style="display:flex;min-height:100vh;align-items:center;justify-content:center;">
+  <div style="text-align:center;"><div class="loading-spinner"></div><div class="hint">Loading…</div></div>
+</div>
+
+<div id="app" style="display:none;">
+  <header class="top">
+    <div class="top-inner">
+      <div class="top-row">
+        <div class="brand">
+          
+          <h1 id="clinicNameDisplay">RichCare Medical Services</h1>
+        </div>
+        <div class="who">
+          <span id="userEmailDisplay"></span>
+          <span class="role-badge" id="roleBadge">admin</span>
+          <button class="btn btn-ghost btn-small" id="logoutBtn">Sign out</button>
+        </div>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab-btn active" data-tab="records" role="tab">Records</button>
+        <button class="tab-btn" data-tab="tests" role="tab" id="testsTabBtn" style="display:none;">Manage tests</button>
+        <button class="tab-btn" data-tab="users" role="tab" id="usersTabBtn" style="display:none;">Manage users</button>
+        
+      </nav>
+    </div>
+  </header>
+
+  <div class="shell">
+
+    <!-- ---------- RECORDS ---------- -->
+    <section class="tab-panel active" id="panel-records">
+      <div class="panel-head">
+        <h2>Find a record</h2>
+        <div class="sub">Search by patient, phone, receipt number, test, or payment status.</div>
+      </div>
+
+      <div class="stat-row" id="statRow"></div>
+
+      <div class="filter-bar">
+        <div class="field grow">
+          <label for="searchInput">Search</label>
+          <input type="text" id="searchInput" placeholder="Name, phone, receipt no., test...">
+        </div>
+        <div class="field">
+          <label for="statusFilter">Status</label>
+          <select id="statusFilter">
+            <option value="all">All</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="unpaid">Unpaid</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="dateFrom">From</label>
+          <input type="date" id="dateFrom">
+        </div>
+        <div class="field">
+          <label for="dateTo">To</label>
+          <input type="date" id="dateTo">
+        </div>
+        <button class="btn btn-ghost" id="refreshRecordsBtn">Refresh</button>
+        <button class="btn btn-ghost" id="printListBtn">Print list</button>
+      </div>
+
+      <div class="stat-row" id="filteredSumsRow" style="margin-bottom:16px;"></div>
+
+      <div class="card">
+        <div style="overflow-x:auto;">
+          <table class="data" id="recordsTable">
+            <thead>
+              <tr>
+                <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+                <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Pledge</th><th>Recorded by</th>
+              </tr>
+            </thead>
+            <tbody id="recordsBody"></tbody>
+          </table>
+          <div class="empty-state" id="recordsEmpty" style="display:none;">
+            <div class="display">No records match yet</div>
+            <div>Try widening your search or clearing the filters.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- MANAGE TESTS ---------- -->
+    <section class="tab-panel" id="panel-tests">
+      <div class="panel-head">
+        <h2>Manage diagnostic tests</h2>
+        <div class="sub">These are the tests recorders see in the searchable dropdown, with their prices.</div>
+      </div>
+
+      <div class="card card-pad" style="margin-bottom:16px;">
+        <div class="field-row">
+          <div class="field">
+            <label for="newTestName">New test name</label>
+            <input type="text" id="newTestName" placeholder="e.g. Hepatitis B Screening">
+          </div>
+          <div class="field">
+            <label for="newTestPrice">Price (₦)</label>
+            <input type="number" id="newTestPrice" min="0" step="1" placeholder="0">
+          </div>
+        </div>
+        <button class="btn btn-primary" id="addTestBtn">Add test</button>
+      </div>
+
+      <div class="card card-pad" style="margin-bottom:16px;">
+        <div style="font-weight:600;margin-bottom:6px;">Bulk import from a price list</div>
+        <div class="hint" style="margin-bottom:10px;">One test per line, name and price separated by a comma — e.g. <span class="mono">Full Blood Count, 4000</span>. Open your Excel/CSV price list, copy the rows, and paste below. If a test name already matches one you have, its price is updated instead of creating a duplicate.</div>
+        <textarea id="bulkImportInput" rows="6" placeholder="Full Blood Count, 4000&#10;Malaria Parasite Test, 2000&#10;..."></textarea>
+        <button class="btn btn-primary" id="bulkImportBtn" style="margin-top:10px;">Import list</button>
+        <div id="bulkImportResult" class="hint" style="margin-top:8px;"></div>
+      </div>
+
+      <div class="card card-pad">
+        <div class="field" style="margin-bottom:14px;">
+          <label for="testSearchFilter">Search tests</label>
+          <input type="text" id="testSearchFilter" placeholder="Search by test name..." autocomplete="off">
+        </div>
+        <div class="hint" id="testListCount" style="margin-bottom:10px;"></div>
+        <div id="testManageList"></div>
+      </div>
+    </section>
+
+    <!-- ---------- MANAGE USERS (SUPER ADMIN ONLY) ---------- -->
+    <section class="tab-panel" id="panel-users">
+      <div class="panel-head">
+        <h2>Manage users</h2>
+        <div class="sub">Register new admin or recorder accounts, and manage existing ones.</div>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <a href="create-user.html" class="btn btn-primary">+ Create user</a>
+      </div>
+
+      <div class="card card-pad">
+        <div style="font-weight:600;margin-bottom:8px;">All users</div>
+        <div id="usersList"></div>
+      </div>
+    </section>
+
+  </div>
+</div>
+
+<!-- ============================= RECORD DETAIL MODAL ============================= -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal wide">
+    <div class="modal-head">
+      <h3 id="detailTitle">Record</h3>
+      <button class="modal-close" id="detailCloseBtn" aria-label="Close">&times;</button>
+    </div>
+    <div class="modal-body" id="detailBody"></div>
+  </div>
+</div>
+
+<div id="printArea"></div>
+<div class="toast" id="toast"></div>
+
+<script type="module">
+import { db, getSecondaryAuth } from "./firebase-config.js";
+import { requireRole, logout } from "./auth-guard.js";
+import {
+  collection, addDoc, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc,
+  query, orderBy, limit
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import {
+  sendPasswordResetEmail
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+
+const $ = (sel) => document.querySelector(sel);
+let diagnostics = [];
+let records = [];
+let users = [];
+let currentRole = null;
+let currentEmail = null;
+
+const fmtNaira = (n) => "₦" + Number(n || 0).toLocaleString("en-NG", {maximumFractionDigits:0});
+const todayISO = () => new Date().toISOString().slice(0,10);
+const fmtDate = (isoOrDate) => {
+  if(!isoOrDate) return "—";
+  const d = typeof isoOrDate === "string" ? new Date(isoOrDate) : isoOrDate;
+  if(isNaN(d)) return "—";
+  return d.toLocaleDateString("en-GB", {day:"2-digit", month:"short", year:"numeric"});
+};
+function escapeHtml(str){
+  return String(str ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
+}
+function toast(msg, isErr){
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.toggle("err", !!isErr);
+  t.classList.add("show");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
+}
+
+/* ---------------- boot / auth ---------------- */
+(async function init(){
+  const { role, email } = await requireRole(["admin", "superadmin"]);
+  currentRole = role; currentEmail = email;
+  $("#userEmailDisplay").textContent = email;
+  $("#roleBadge").textContent = role;
+  $("#logoutBtn").addEventListener("click", logout);
+  if(role === "superadmin"){
+    $("#usersTabBtn").style.display = "inline-block";
+    $("#testsTabBtn").style.display = "inline-block";
+  }
+
+  await loadClinicName();
+  await loadRecords();
+  renderRecordsTable();
+  if(role === "superadmin"){
+    await loadDiagnostics();
+    renderTestManageList();
+  }
+
+  $("#loadingScreen").style.display = "none";
+  $("#app").style.display = "block";
+})();
+
+/* ---------------- tabs ---------------- */
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const tab = btn.dataset.tab;
+    if((tab === "users" || tab === "tests") && currentRole !== "superadmin") return;
+    document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
+    document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + tab));
+    if(tab === "users") loadAndRenderUsers();
+  });
+});
+
+/* ---------------- clinic name (read-only display; managed directly in Firestore) ---------------- */
+async function loadClinicName(){
+  const snap = await getDoc(doc(db, "settings", "general"));
+  const name = snap.exists() && snap.data().clinicName ? snap.data().clinicName : "Diagnostics Center";
+  $("#clinicNameDisplay").textContent = name;
+}
+
+/* ---------------- diagnostics management ---------------- */
+async function loadDiagnostics(){
+  const snap = await getDocs(collection(db, "diagnostics"));
+  diagnostics = snap.docs.map(d => ({id: d.id, ...d.data()})).sort((a,b) => a.name.localeCompare(b.name));
+}
+function renderTestManageList(){
+  const wrap = $("#testManageList");
+  const countLabel = $("#testListCount");
+  const term = $("#testSearchFilter").value.trim().toLowerCase();
+
+  if(diagnostics.length === 0){
+    countLabel.textContent = "";
+    wrap.innerHTML = '<div class="empty-state"><div class="display">No tests yet</div><div>Add your first diagnostic test above.</div></div>';
+    return;
+  }
+
+  const visible = term ? diagnostics.filter(t => t.name.toLowerCase().includes(term)) : diagnostics;
+  countLabel.textContent = term
+    ? `${visible.length} of ${diagnostics.length} tests match "${term}"`
+    : `${diagnostics.length} tests`;
+
+  if(visible.length === 0){
+    wrap.innerHTML = '<div class="empty-state"><div class="display">No tests match</div><div>Try a different search term.</div></div>';
+    return;
+  }
+
+  wrap.innerHTML = visible.map(t => `
+    <div class="manage-row" data-id="${t.id}">
+      <div class="name">${escapeHtml(t.name)}</div>
+      <input type="number" class="mono price-input" value="${t.price}" min="0" step="1">
+      <button class="btn btn-danger btn-small delete-test-btn">Remove</button>
+    </div>
+  `).join("");
+  wrap.querySelectorAll(".price-input").forEach(inp => {
+    inp.addEventListener("change", async (e) => {
+      const id = e.target.closest(".manage-row").dataset.id;
+      await updateDoc(doc(db, "diagnostics", id), {price: Number(e.target.value) || 0});
+      await loadDiagnostics();
+      renderTestManageList();
+      toast("Price updated");
+    });
+  });
+  wrap.querySelectorAll(".delete-test-btn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.target.closest(".manage-row").dataset.id;
+      const t = diagnostics.find(d => d.id === id);
+      if(confirm(`Remove "${t?.name}" from the test list?`)){
+        await deleteDoc(doc(db, "diagnostics", id));
+        await loadDiagnostics();
+        renderTestManageList();
+        toast("Test removed");
+      }
+    });
+  });
+}
+$("#addTestBtn").addEventListener("click", async () => {
+  const name = $("#newTestName").value.trim();
+  const price = Number($("#newTestPrice").value) || 0;
+  if(!name){ toast("Enter a test name", true); return; }
+  await addDoc(collection(db, "diagnostics"), {name, price});
+  $("#newTestName").value = ""; $("#newTestPrice").value = "";
+  await loadDiagnostics();
+  renderTestManageList();
+  toast("Test added");
+});
+
+$("#testSearchFilter").addEventListener("input", renderTestManageList);
+
+$("#bulkImportBtn").addEventListener("click", async () => {
+  const raw = $("#bulkImportInput").value;
+  const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
+  const resultBox = $("#bulkImportResult");
+  if(lines.length === 0){ toast("Paste at least one line first", true); return; }
+
+  const existingByName = new Map(diagnostics.map(t => [t.name.trim().toLowerCase(), t]));
+  let created = 0, updated = 0, failed = 0;
+  const failedLines = [];
+
+  $("#bulkImportBtn").disabled = true;
+  $("#bulkImportBtn").textContent = "Importing…";
+
+  for(const line of lines){
+    const lastComma = line.lastIndexOf(",");
+    if(lastComma === -1){ failed++; failedLines.push(line); continue; }
+    const name = line.slice(0, lastComma).trim();
+    const priceStr = line.slice(lastComma + 1).replace(/[^0-9.]/g, "");
+    const price = Number(priceStr);
+    if(!name || !priceStr || isNaN(price)){ failed++; failedLines.push(line); continue; }
+
+    try{
+      const match = existingByName.get(name.toLowerCase());
+      if(match){
+        await updateDoc(doc(db, "diagnostics", match.id), {price});
+        updated++;
+      } else {
+        await addDoc(collection(db, "diagnostics"), {name, price});
+        created++;
+      }
+    }catch(e){
+      console.error(e);
+      failed++;
+      failedLines.push(line);
+    }
+  }
+
+  await loadDiagnostics();
+  renderTestManageList();
+  $("#bulkImportBtn").disabled = false;
+  $("#bulkImportBtn").textContent = "Import list";
+
+  resultBox.innerHTML = `${created} added, ${updated} updated${failed ? `, ${failed} skipped (couldn't parse a name/price)` : ""}.`
+    + (failedLines.length ? `<br><span class="mono" style="font-size:11px;">${failedLines.map(escapeHtml).join("<br>")}</span>` : "");
+  toast(`Import complete — ${created} added, ${updated} updated`);
+  if(!failed) $("#bulkImportInput").value = "";
+});
+
+/* ---------------- records: load / filter / render / detail ---------------- */
+async function loadRecords(){
+  try{
+    const q = query(collection(db, "records"), orderBy("createdAt", "desc"), limit(1000));
+    const snap = await getDocs(q);
+    records = snap.docs.map(d => ({id: d.id, ...d.data()}));
+  }catch(e){
+    console.error(e);
+    toast("Couldn't load records", true);
+  }
+}
+function filteredRecords(){
+  const term = $("#searchInput").value.trim().toLowerCase();
+  const status = $("#statusFilter").value;
+  const from = $("#dateFrom").value;
+  const to = $("#dateTo").value;
+  return records.filter(r => {
+    if(status !== "all" && r.status !== status) return false;
+    if(from && r.createdAt.slice(0,10) < from) return false;
+    if(to && r.createdAt.slice(0,10) > to) return false;
+    if(term){
+      const hay = [
+        r.patientName, r.patientPhone, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
+        ...(r.tests || []).map(t => t.name),
+        ...(r.payments || []).map(p => p.mode)
+      ].join(" ").toLowerCase();
+      if(!hay.includes(term)) return false;
+    }
+    return true;
+  });
+}
+function renderStats(){
+  const total = records.length;
+  const outstanding = records.reduce((s, r) => s + (r.balance || 0), 0);
+  const today = todayISO();
+  const dueToday = records.filter(r => r.balance > 0 && r.pledgeDate === today).length;
+  const overdue = records.filter(r => r.balance > 0 && r.pledgeDate && r.pledgeDate < today).length;
+  $("#statRow").innerHTML = `
+    <div class="stat-box"><div class="num">${total}</div><div class="lbl">Total records</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(outstanding)}</div><div class="lbl">Outstanding balance</div></div>
+    <div class="stat-box"><div class="num">${dueToday}</div><div class="lbl">Pledges due today</div></div>
+    <div class="stat-box"><div class="num">${overdue}</div><div class="lbl">Overdue pledges</div></div>
+  `;
+}
+function renderFilteredSums(rows){
+  const sumTotal = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
+  const sumPaid = rows.reduce((s, r) => s + (r.amountPaid || 0), 0);
+  const sumBalance = rows.reduce((s, r) => s + (r.balance || 0), 0);
+  $("#filteredSumsRow").innerHTML = `
+    <div class="stat-box"><div class="num">${rows.length}</div><div class="lbl">Matching records</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumTotal)}</div><div class="lbl">Sum of total</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumPaid)}</div><div class="lbl">Sum of paid</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumBalance)}</div><div class="lbl">Sum of balance</div></div>
+  `;
+}
+function renderRecordsTable(){
+  renderStats();
+  const rows = filteredRecords();
+  renderFilteredSums(rows);
+  const body = $("#recordsBody");
+  $("#recordsEmpty").style.display = rows.length ? "none" : "block";
+  body.innerHTML = rows.map(r => `
+    <tr class="row-click" data-id="${r.id}">
+      <td class="rid">${r.receiptNo}</td>
+      <td>${fmtDate(r.createdAt)}</td>
+      <td>${escapeHtml(r.patientName)}</td>
+      <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
+      <td class="mono">${fmtNaira(r.totalAmount)}</td>
+      <td class="mono">${fmtNaira(r.amountPaid)}</td>
+      <td class="mono">${fmtNaira(r.balance)}</td>
+      <td><span class="status-pill status-${r.status}">${r.status}</span></td>
+      <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
+      <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
+    </tr>
+  `).join("");
+  body.querySelectorAll(".row-click").forEach(row => {
+    row.addEventListener("click", () => openDetail(row.dataset.id));
+  });
+}
+["#searchInput", "#statusFilter", "#dateFrom", "#dateTo"].forEach(sel => {
+  $(sel).addEventListener("input", renderRecordsTable);
+  $(sel).addEventListener("change", renderRecordsTable);
+});
+$("#refreshRecordsBtn").addEventListener("click", async () => {
+  await loadRecords();
+  renderRecordsTable();
+  toast("Records refreshed");
+});
+
+/* ---------------- print the current filtered records list ---------------- */
+$("#printListBtn").addEventListener("click", () => {
+  const rows = filteredRecords();
+  if(rows.length === 0){ toast("No records match the current filters", true); return; }
+
+  const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
+  const status = $("#statusFilter").value;
+  const term = $("#searchInput").value.trim();
+  const from = $("#dateFrom").value;
+  const to = $("#dateTo").value;
+  const filterBits = [];
+  if(term) filterBits.push(`search "${term}"`);
+  if(status !== "all") filterBits.push(`status: ${status}`);
+  if(from) filterBits.push(`from ${fmtDate(from)}`);
+  if(to) filterBits.push(`to ${fmtDate(to)}`);
+  const filterSummary = filterBits.length ? filterBits.join(" · ") : "All records";
+
+  const sumTotal = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
+  const sumPaid = rows.reduce((s, r) => s + (r.amountPaid || 0), 0);
+  const outstanding = rows.reduce((s, r) => s + (r.balance || 0), 0);
+  const generatedAt = new Date().toLocaleString("en-GB", {day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td class="mono">${r.receiptNo}</td>
+      <td>${fmtDate(r.createdAt)}</td>
+      <td>${escapeHtml(r.patientName)}</td>
+      <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
+      <td class="mono">${fmtNaira(r.totalAmount)}</td>
+      <td class="mono">${fmtNaira(r.amountPaid)}</td>
+      <td class="mono">${fmtNaira(r.balance)}</td>
+      <td>${r.status}</td>
+      <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
+      <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
+    </tr>
+  `).join("");
+
+  $("#printArea").innerHTML = `
+    <div class="print-report">
+      <div class="print-report-head">
+        <div class="clinic">${escapeHtml(clinicName)} — Records report</div>
+        <div class="meta">${escapeHtml(filterSummary)} · ${rows.length} record${rows.length === 1 ? "" : "s"} · Generated ${generatedAt}</div>
+      </div>
+      <table class="print-report-table">
+        <thead>
+          <tr>
+            <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+            <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Pledge</th><th>Recorded by</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+      <div class="print-report-summary">Sum of total: ${fmtNaira(sumTotal)} &nbsp;·&nbsp; Sum of paid: ${fmtNaira(sumPaid)} &nbsp;·&nbsp; Sum of balance: ${fmtNaira(outstanding)}</div>
+    </div>
+  `;
+  window.print();
+});
+
+function openDetail(id){
+  const rec = records.find(r => r.id === id);
+  if(!rec) return;
+  $("#detailTitle").textContent = rec.receiptNo + " — " + rec.patientName;
+  const paymentsHtml = (rec.payments || []).length
+    ? rec.payments.map(p => `
+        <div class="payment-hist-item">
+          <span>${fmtDate(p.date)} · ${escapeHtml(p.mode)}${p.note ? " · " + escapeHtml(p.note) : ""}</span>
+          <span class="amt">${fmtNaira(p.amount)}</span>
+        </div>`).join("")
+    : '<div class="hint">No payments logged yet.</div>';
+
+  $("#detailBody").innerHTML = `
+    <dl class="kv-grid" style="margin-bottom:18px;">
+      <dt>Patient</dt><dd>${escapeHtml(rec.patientName)}</dd>
+      <dt>Phone</dt><dd>${rec.patientPhone ? escapeHtml(rec.patientPhone) : "—"}</dd>
+      <dt>Tests</dt><dd>${(rec.tests||[]).map(t => `${escapeHtml(t.name)} (${fmtNaira(t.price)})`).join(", ")}</dd>
+      <dt>Total</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
+      <dt>Paid</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
+      <dt>Balance</dt><dd class="mono">${fmtNaira(rec.balance)}</dd>
+      <dt>Status</dt><dd><span class="status-pill status-${rec.status}">${rec.status}</span></dd>
+      <dt>Pledge date</dt><dd>${rec.pledgeDate ? fmtDate(rec.pledgeDate) : "—"}</dd>
+      <dt>Recorded by</dt><dd>${escapeHtml(rec.recordedByName || rec.recordedBy || "—")}</dd>
+      <dt>Notes</dt><dd>${rec.notes ? escapeHtml(rec.notes) : "—"}</dd>
+    </dl>
+    <div style="font-weight:600;margin-bottom:8px;">Payment history</div>
+    ${paymentsHtml}
+    ${rec.balance > 0 ? `
+      <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);">
+        <div style="font-weight:600;margin-bottom:10px;">Log a new payment</div>
+        <div class="field-row">
+          <div class="field"><label>Amount</label><input type="number" id="addPayAmount" min="0" max="${rec.balance}" placeholder="0"></div>
+          <div class="field"><label>Mode</label>
+            <select id="addPayMode">
+              <option value="">— select —</option>
+              <option>Cash</option><option>Card</option><option>Bank transfer</option><option>POS</option><option>Other</option>
+            </select>
+          </div>
+        </div>
+        <div class="field" id="addPayPledgeField"><label>New pledge date (if balance remains)</label><input type="date" id="addPayPledge"></div>
+        <button class="btn btn-primary btn-small" id="addPaymentBtn">Log payment</button>
+      </div>
+    ` : ""}
+    <div style="margin-top:18px;display:flex;gap:10px;">
+      <button class="btn btn-ghost btn-small" id="reprintBtn">Print receipt (2 copies)</button>
+    </div>
+  `;
+
+  const addBtn = document.getElementById("addPaymentBtn");
+  if(addBtn) addBtn.addEventListener("click", () => addPaymentToRecord(rec));
+  document.getElementById("reprintBtn").addEventListener("click", () => printReceipt(rec));
+
+  $("#detailOverlay").classList.add("show");
+}
+$("#detailCloseBtn").addEventListener("click", () => $("#detailOverlay").classList.remove("show"));
+
+async function addPaymentToRecord(rec){
+  const amount = Number(document.getElementById("addPayAmount").value) || 0;
+  const mode = document.getElementById("addPayMode").value;
+  const pledge = document.getElementById("addPayPledge").value;
+  if(amount <= 0){ toast("Enter a payment amount", true); return; }
+  if(!mode){ toast("Select a payment mode", true); return; }
+  const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
+  const newBalance = Math.max(rec.totalAmount - newPaid, 0);
+  if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
+  const status = newBalance <= 0 ? "paid" : "partial";
+  const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
+  try{
+    await updateDoc(doc(db, "records", rec.id), {
+      amountPaid: newPaid, balance: newBalance, status,
+      pledgeDate: newBalance > 0 ? pledge : null,
+      payments, updatedAt: new Date().toISOString()
+    });
+    toast("Payment logged");
+    $("#detailOverlay").classList.remove("show");
+    await loadRecords();
+    renderRecordsTable();
+  }catch(e){
+    console.error(e);
+    toast("Couldn't save the payment", true);
+  }
+}
+
+/* ---------------- receipt print (2 copies, A4, dashed cut line) ---------------- */
+function receiptHtml(rec, copyLabel){
+  const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
+  const testsRows = (rec.tests || []).map(t => `<div class="row"><span>${escapeHtml(t.name)}</span><span class="p">${fmtNaira(t.price)}</span></div>`).join("");
+  return `
+    <div class="receipt">
+      <div class="receipt-top">
+        <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
+        <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
+      </div>
+      <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
+      ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
+      <div class="receipt-tests">${testsRows}</div>
+      <div class="receipt-totals">
+        <div class="row"><span>Total</span><span class="v">${fmtNaira(rec.totalAmount)}</span></div>
+        <div class="row"><span>Paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
+        <div class="row bold"><span>Balance</span><span class="v">${fmtNaira(rec.balance)}</span></div>
+      </div>
+      ${rec.balance > 0 ? `<div class="receipt-pledge">Balance of ${fmtNaira(rec.balance)} pledged for ${fmtDate(rec.pledgeDate)}</div>` : ""}
+      <div class="receipt-signature">
+        <div class="sig-name">${escapeHtml(rec.recordedByName || rec.recordedBy || "")}</div>
+        <div class="sig-line"></div>
+        <div class="sig-label">Recorded by</div>
+      </div>
+      <div class="receipt-foot">Thank you. Please keep this receipt for your records.</div>
+    </div>
+  `;
+}
+function printReceipt(rec){
+  $("#printArea").innerHTML = `
+    <div class="print-page">
+      <div class="print-copy">${receiptHtml(rec, "Customer copy")}</div>
+      <div class="cut-line"><span>&#9986; cut here</span></div>
+      <div class="print-copy">${receiptHtml(rec, "Company copy")}</div>
+    </div>
+  `;
+  window.print();
+}
+
+/* ---------------- manage users (super admin only) ---------------- */
+async function loadAndRenderUsers(){
+  if(currentRole !== "superadmin") return;
+  const wrap = $("#usersList");
+  wrap.innerHTML = '<div class="hint">Loading users…</div>';
+  try{
+    const snap = await getDocs(collection(db, "users"));
+    users = snap.docs.map(d => ({id: d.id, ...d.data()}));
+  }catch(e){
+    console.error(e);
+    wrap.innerHTML = '<div class="setup-error" style="display:block;">Couldn\'t load users.</div>';
+    return;
+  }
+  if(users.length === 0){
+    wrap.innerHTML = '<div class="empty-state"><div class="display">No users yet</div><div>Click "+ Create user" above to register the first admin or recorder.</div></div>';
+    return;
+  }
+  wrap.innerHTML = users.map(u => `
+    <div class="user-row" data-uid="${u.id}">
+      <div class="email">${escapeHtml(u.displayName || u.email)}<span class="name">${escapeHtml(u.email)}${u.phone ? " · " + escapeHtml(u.phone) : ""}</span></div>
+      <select class="role-select" ${u.email === currentEmail ? "disabled" : ""}>
+        <option value="recorder" ${u.role === "recorder" ? "selected" : ""}>Recorder</option>
+        <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+        <option value="superadmin" ${u.role === "superadmin" ? "selected" : ""}>Super admin</option>
+      </select>
+      <div class="hint" style="margin:0;">${fmtDate(u.createdAt)}</div>
+      <div class="actions">
+        <button class="btn btn-ghost btn-small reset-pw-btn">Reset password</button>
+        ${u.email === currentEmail ? "" : `<button class="btn btn-danger btn-small deactivate-btn">Deactivate</button>`}
+      </div>
+    </div>
+  `).join("");
+
+  wrap.querySelectorAll(".role-select").forEach(sel => {
+    sel.addEventListener("change", async (e) => {
+      const uid = e.target.closest(".user-row").dataset.uid;
+      try{
+        await updateDoc(doc(db, "users", uid), {role: e.target.value});
+        toast("Role updated");
+      }catch(err){
+        console.error(err);
+        toast("Couldn't update role", true);
+      }
+    });
+  });
+  wrap.querySelectorAll(".reset-pw-btn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const uid = e.target.closest(".user-row").dataset.uid;
+      const u = users.find(x => x.id === uid);
+      try{
+        await sendPasswordResetEmail(getSecondaryAuth(), u.email);
+        toast("Password reset email sent to " + u.email);
+      }catch(err){
+        console.error(err);
+        toast("Couldn't send reset email", true);
+      }
+    });
+  });
+  wrap.querySelectorAll(".deactivate-btn").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const uid = e.target.closest(".user-row").dataset.uid;
+      const u = users.find(x => x.id === uid);
+      if(confirm(`Deactivate ${u.email}? They won't be able to sign in until reactivated (their sign-in account still exists, but loses access).`)){
+        try{
+          await deleteDoc(doc(db, "users", uid));
+          toast("User deactivated");
+          loadAndRenderUsers();
+        }catch(err){
+          console.error(err);
+          toast("Couldn't deactivate user", true);
+        }
+      }
+    });
+  });
+}
+
+</script>
+</body>
+</html>
