@@ -259,3 +259,28 @@ table.data .rid{font-family:"IBM Plex Mono",monospace;color:var(--ink-soft);font
 .lookup-result{margin-top:16px;}
 
 .visually-hidden{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;}
+/* ---------- full patient information print ---------- */
+.full-info-sheet{background:#fff;border:1px solid var(--line);border-radius:8px;padding:28px;color:var(--ink);}
+.full-info-head{display:flex;justify-content:space-between;gap:24px;border-bottom:2px solid var(--teal-deep);padding-bottom:16px;margin-bottom:22px;}
+.full-info-head .clinic{font-size:20px;font-weight:700;color:var(--teal-deep);}
+.full-info-head .title{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-soft);margin-top:4px;}
+.full-info-head .meta{text-align:right;font-family:"IBM Plex Mono",monospace;font-size:12px;}
+.full-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 22px;}
+.full-info-grid>div{border-bottom:1px solid var(--line-soft);padding:8px 0;display:flex;flex-direction:column;gap:3px;}
+.full-info-grid .wide{grid-column:1/-1;}
+.full-info-grid span,.full-info-section h3{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--ink-soft);}
+.full-info-grid strong{font-size:14px;}
+.full-info-section{margin-top:24px;}
+.full-info-section h3{margin:0 0 10px;}
+.full-info-section ul{margin:0;padding-left:20px;columns:2;}
+.full-info-section li{padding:3px 0;}
+.full-info-section p{white-space:pre-wrap;margin:0;min-height:44px;}
+.full-info-signatures{display:grid;grid-template-columns:1fr 1fr;gap:70px;margin-top:55px;}
+.full-info-signatures>div{border-top:1px solid var(--ink);padding-top:5px;text-align:center;}
+.full-info-signatures span{display:block;min-height:18px;font-family:"Caveat",cursive;font-size:18px;}
+.full-info-signatures small{font-size:10px;text-transform:uppercase;color:var(--ink-soft);}
+@media(max-width:640px){.full-info-grid{grid-template-columns:1fr}.full-info-grid .wide{grid-column:auto}.full-info-section ul{columns:1}}
+@media print{
+  .full-info-print{display:block!important;height:auto!important;min-height:0!important;}
+  .full-info-print .full-info-sheet{border:none;border-radius:0;padding:16mm 14mm;}
+}

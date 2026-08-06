@@ -206,6 +206,9 @@ function toast(msg, isErr){
   toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
 }
 
+
+
+
 /* ---------------- boot / auth ---------------- */
 (async function init(){
   const { role, email } = await requireRole(["admin", "superadmin"]);
@@ -284,6 +287,12 @@ function renderTestManageList(){
   wrap.querySelectorAll(".price-input").forEach(inp => {
     inp.addEventListener("change", async (e) => {
       const id = e.target.closest(".manage-row").dataset.id;
+      const test = diagnostics.find(d => d.id === id);
+      if(!window.confirm(`Update the price for "${test?.name || "this test"}"?`)){
+        await loadDiagnostics();
+        renderTestManageList();
+        return;
+      }
       await updateDoc(doc(db, "diagnostics", id), {price: Number(e.target.value) || 0});
       await loadDiagnostics();
       renderTestManageList();
@@ -307,6 +316,7 @@ $("#addTestBtn").addEventListener("click", async () => {
   const name = $("#newTestName").value.trim();
   const price = Number($("#newTestPrice").value) || 0;
   if(!name){ toast("Enter a test name", true); return; }
+  if(!window.confirm(`Add "${name}" to the diagnostic test list?`)) return;
   await addDoc(collection(db, "diagnostics"), {name, price});
   $("#newTestName").value = ""; $("#newTestPrice").value = "";
   await loadDiagnostics();
@@ -321,6 +331,7 @@ $("#bulkImportBtn").addEventListener("click", async () => {
   const lines = raw.split("\n").map(l => l.trim()).filter(Boolean);
   const resultBox = $("#bulkImportResult");
   if(lines.length === 0){ toast("Paste at least one line first", true); return; }
+  if(!window.confirm(`Import ${lines.length} test entr${lines.length === 1 ? "y" : "ies"}? Existing matching tests may be updated.`)) return;
 
   const existingByName = new Map(diagnostics.map(t => [t.name.trim().toLowerCase(), t]));
   let created = 0, updated = 0, failed = 0;
@@ -386,7 +397,7 @@ function filteredRecords(){
     if(to && r.createdAt.slice(0,10) > to) return false;
     if(term){
       const hay = [
-        r.patientName, r.patientPhone, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
+        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.officerName, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
         ...(r.tests || []).map(t => t.name),
         ...(r.payments || []).map(p => p.mode)
       ].join(" ").toLowerCase();
@@ -576,6 +587,7 @@ async function addPaymentToRecord(rec){
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
   if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
+  if(!window.confirm(`Log a payment of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
   const status = newBalance <= 0 ? "paid" : "partial";
   const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
   try{
@@ -598,6 +610,8 @@ async function addPaymentToRecord(rec){
 function receiptHtml(rec, copyLabel){
   const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
   const testsRows = (rec.tests || []).map(t => `<div class="row"><span>${escapeHtml(t.name)}</span><span class="p">${fmtNaira(t.price)}</span></div>`).join("");
+  const paymentModes = [...new Set((rec.payments || []).map(payment => payment.mode).filter(Boolean))];
+  const paymentModeText = paymentModes.length ? paymentModes.join(", ") : "No payment recorded";
   return `
     <div class="receipt">
       <div class="receipt-top">
@@ -606,6 +620,7 @@ function receiptHtml(rec, copyLabel){
       </div>
       <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
       ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
+      <div class="receipt-field"><span class="k">Payment mode</span><span>${escapeHtml(paymentModeText)}</span></div>
       <div class="receipt-tests">${testsRows}</div>
       <div class="receipt-totals">
         <div class="row"><span>Total</span><span class="v">${fmtNaira(rec.totalAmount)}</span></div>
@@ -669,6 +684,11 @@ async function loadAndRenderUsers(){
   wrap.querySelectorAll(".role-select").forEach(sel => {
     sel.addEventListener("change", async (e) => {
       const uid = e.target.closest(".user-row").dataset.uid;
+      const u = users.find(x => x.id === uid);
+      if(!window.confirm(`Change ${u?.email || "this user"}'s role to ${e.target.value}?`)){
+        loadAndRenderUsers();
+        return;
+      }
       try{
         await updateDoc(doc(db, "users", uid), {role: e.target.value});
         toast("Role updated");
@@ -682,6 +702,7 @@ async function loadAndRenderUsers(){
     btn.addEventListener("click", async (e) => {
       const uid = e.target.closest(".user-row").dataset.uid;
       const u = users.find(x => x.id === uid);
+      if(!window.confirm(`Send a password reset email to ${u.email}?`)) return;
       try{
         await sendPasswordResetEmail(getSecondaryAuth(), u.email);
         toast("Password reset email sent to " + u.email);

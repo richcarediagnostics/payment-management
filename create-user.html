@@ -120,6 +120,9 @@ function toast(msg, isErr){
   clearTimeout(toast._t);
   toast._t = setTimeout(()=> t.classList.remove("show"), 2600);
 }
+
+
+
 function showError(msg){
   $("#formError").style.display = "block";
   $("#formError").textContent = msg;
@@ -146,6 +149,7 @@ $("#createBtn").addEventListener("click", async () => {
   if(!phone){ showError("Enter a phone number"); return; }
   if(!email){ showError("Enter an email"); return; }
   if(!password || password.length < 6){ showError("Password must be at least 6 characters"); return; }
+  if(!window.confirm(`Create a new ${role} account for ${displayName}?`)) return;
 
   $("#createBtn").disabled = true;
   $("#createBtn").textContent = "Creating…";
@@ -176,6 +180,7 @@ $("#createBtn").addEventListener("click", async () => {
 });
 
 $("#createAnotherBtn").addEventListener("click", () => {
+  if(!window.confirm("Clear this form and create another user?")) return;
   $("#fullName").value = ""; $("#phone").value = ""; $("#email").value = ""; $("#password").value = "";
   document.querySelector('input[name="role"][value="recorder"]').checked = true;
   $("#successView").style.display = "none";
