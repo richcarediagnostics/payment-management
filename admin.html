@@ -60,6 +60,8 @@
             <option value="paid">Paid</option>
             <option value="partial">Partial</option>
             <option value="unpaid">Unpaid</option>
+            <option value="refunded_75">Refunded 75%</option>
+            <option value="refunded_100">Refunded 100%</option>
           </select>
         </div>
         <div class="field">
@@ -91,6 +93,10 @@
             <div class="display">No records match yet</div>
             <div>Try widening your search or clearing the filters.</div>
           </div>
+        </div>
+        <div class="pagination-bar" id="recordsPagination">
+          <div class="hint" id="recordsPageInfo"></div>
+          <button class="btn btn-ghost" id="loadMoreRecordsBtn">Load more records</button>
         </div>
       </div>
     </section>
@@ -173,7 +179,7 @@ import { db, getSecondaryAuth } from "./firebase-config.js";
 import { requireRole, logout } from "./auth-guard.js";
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc,
-  query, orderBy, limit
+  query, orderBy, limit, startAfter
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   sendPasswordResetEmail
@@ -186,6 +192,11 @@ let users = [];
 let currentRole = null;
 let currentEmail = null;
 
+const RECORDS_PAGE_SIZE = 50;
+let lastRecordDoc = null;
+let hasMoreRecords = true;
+let recordsLoading = false;
+
 const fmtNaira = (n) => "₦" + Number(n || 0).toLocaleString("en-NG", {maximumFractionDigits:0});
 const todayISO = () => new Date().toISOString().slice(0,10);
 const fmtDate = (isoOrDate) => {
@@ -194,6 +205,16 @@ const fmtDate = (isoOrDate) => {
   if(isNaN(d)) return "—";
   return d.toLocaleDateString("en-GB", {day:"2-digit", month:"short", year:"numeric"});
 };
+const grossPaidFor = (rec) => Number(rec.grossAmountPaid ?? (rec.payments || []).reduce((sum, p) => sum + Number(p.amount || 0), 0));
+const refundedFor = (rec) => Number(rec.refundedAmount || 0);
+const refundPercentFor = (rec) => Number(rec.refundPercent || 0);
+function displayStatus(rec){
+  const pct = refundPercentFor(rec);
+  if(pct === 100) return "refunded 100%";
+  if(pct === 75) return "refunded 75%";
+  return rec.status || "—";
+}
+function statusClass(rec){ return refundPercentFor(rec) ? "refunded" : (rec.status || "unpaid"); }
 function escapeHtml(str){
   return String(str ?? "").replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 }
@@ -222,7 +243,7 @@ function toast(msg, isErr){
   }
 
   await loadClinicName();
-  await loadRecords();
+  await loadRecords({reset: true});
   renderRecordsTable();
   if(role === "superadmin"){
     await loadDiagnostics();
@@ -376,15 +397,40 @@ $("#bulkImportBtn").addEventListener("click", async () => {
 });
 
 /* ---------------- records: load / filter / render / detail ---------------- */
-async function loadRecords(){
+async function loadRecords({reset = false} = {}){
+  if(recordsLoading || (!reset && !hasMoreRecords)) return;
+  recordsLoading = true;
+  updateRecordsPagination();
   try{
-    const q = query(collection(db, "records"), orderBy("createdAt", "desc"), limit(1000));
-    const snap = await getDocs(q);
-    records = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    if(reset){
+      records = [];
+      lastRecordDoc = null;
+      hasMoreRecords = true;
+    }
+    const constraints = [orderBy("createdAt", "desc")];
+    if(lastRecordDoc) constraints.push(startAfter(lastRecordDoc));
+    constraints.push(limit(RECORDS_PAGE_SIZE));
+    const snap = await getDocs(query(collection(db, "records"), ...constraints));
+    const nextRecords = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    records = reset ? nextRecords : [...records, ...nextRecords];
+    lastRecordDoc = snap.docs.length ? snap.docs[snap.docs.length - 1] : lastRecordDoc;
+    hasMoreRecords = snap.docs.length === RECORDS_PAGE_SIZE;
   }catch(e){
     console.error(e);
     toast("Couldn't load records", true);
+  }finally{
+    recordsLoading = false;
+    updateRecordsPagination();
   }
+}
+function updateRecordsPagination(){
+  const btn = $("#loadMoreRecordsBtn");
+  const info = $("#recordsPageInfo");
+  if(!btn || !info) return;
+  info.textContent = records.length ? `${records.length} record${records.length === 1 ? "" : "s"} loaded` : "No records loaded";
+  btn.style.display = hasMoreRecords ? "inline-flex" : "none";
+  btn.disabled = recordsLoading;
+  btn.textContent = recordsLoading ? "Loading more…" : "Load more records";
 }
 function filteredRecords(){
   const term = $("#searchInput").value.trim().toLowerCase();
@@ -392,12 +438,16 @@ function filteredRecords(){
   const from = $("#dateFrom").value;
   const to = $("#dateTo").value;
   return records.filter(r => {
-    if(status !== "all" && r.status !== status) return false;
+    if(status !== "all"){
+      if(status === "refunded_75" && refundPercentFor(r) !== 75) return false;
+      else if(status === "refunded_100" && refundPercentFor(r) !== 100) return false;
+      else if(!status.startsWith("refunded_") && r.status !== status) return false;
+    }
     if(from && r.createdAt.slice(0,10) < from) return false;
     if(to && r.createdAt.slice(0,10) > to) return false;
     if(term){
       const hay = [
-        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo, r.notes, r.status, r.recordedBy, r.recordedByName,
+        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo, r.notes, r.status, displayStatus(r), r.isHMO ? "HMO" : "standard", r.recordedBy, r.recordedByName,
         ...(r.tests || []).map(t => t.name),
         ...(r.payments || []).map(p => p.mode)
       ].join(" ").toLowerCase();
@@ -412,9 +462,11 @@ function renderStats(){
   const today = todayISO();
   const dueToday = records.filter(r => r.balance > 0 && r.pledgeDate === today).length;
   const overdue = records.filter(r => r.balance > 0 && r.pledgeDate && r.pledgeDate < today).length;
+  const refunded = records.reduce((s, r) => s + refundedFor(r), 0);
   $("#statRow").innerHTML = `
-    <div class="stat-box"><div class="num">${total}</div><div class="lbl">Total records</div></div>
+    <div class="stat-box"><div class="num">${total}</div><div class="lbl">Loaded records</div></div>
     <div class="stat-box"><div class="num">${fmtNaira(outstanding)}</div><div class="lbl">Outstanding balance</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(refunded)}</div><div class="lbl">Refunded</div></div>
     <div class="stat-box"><div class="num">${dueToday}</div><div class="lbl">Pledges due today</div></div>
     <div class="stat-box"><div class="num">${overdue}</div><div class="lbl">Overdue pledges</div></div>
   `;
@@ -423,10 +475,12 @@ function renderFilteredSums(rows){
   const sumTotal = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
   const sumPaid = rows.reduce((s, r) => s + (r.amountPaid || 0), 0);
   const sumBalance = rows.reduce((s, r) => s + (r.balance || 0), 0);
+  const sumRefunded = rows.reduce((s, r) => s + refundedFor(r), 0);
   $("#filteredSumsRow").innerHTML = `
     <div class="stat-box"><div class="num">${rows.length}</div><div class="lbl">Matching records</div></div>
-    <div class="stat-box"><div class="num">${fmtNaira(sumTotal)}</div><div class="lbl">Sum of total</div></div>
-    <div class="stat-box"><div class="num">${fmtNaira(sumPaid)}</div><div class="lbl">Sum of paid</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumTotal)}</div><div class="lbl">Net total</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumPaid)}</div><div class="lbl">Net paid</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumRefunded)}</div><div class="lbl">Refunded</div></div>
     <div class="stat-box"><div class="num">${fmtNaira(sumBalance)}</div><div class="lbl">Sum of balance</div></div>
   `;
 }
@@ -440,12 +494,12 @@ function renderRecordsTable(){
     <tr class="row-click" data-id="${r.id}">
       <td class="rid">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
-      <td>${escapeHtml(r.patientName)}</td>
+      <td>${escapeHtml(r.patientName)}${r.isHMO ? ' <span class="record-flag hmo-flag">HMO</span>' : ""}</td>
       <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
       <td class="mono">${fmtNaira(r.balance)}</td>
-      <td><span class="status-pill status-${r.status}">${r.status}</span></td>
+      <td><span class="status-pill status-${statusClass(r)}">${displayStatus(r)}</span></td>
       <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
       <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
     </tr>
@@ -459,9 +513,13 @@ function renderRecordsTable(){
   $(sel).addEventListener("change", renderRecordsTable);
 });
 $("#refreshRecordsBtn").addEventListener("click", async () => {
-  await loadRecords();
+  await loadRecords({reset: true});
   renderRecordsTable();
   toast("Records refreshed");
+});
+$("#loadMoreRecordsBtn").addEventListener("click", async () => {
+  await loadRecords();
+  renderRecordsTable();
 });
 
 /* ---------------- print the current filtered records list ---------------- */
@@ -484,18 +542,19 @@ $("#printListBtn").addEventListener("click", () => {
   const sumTotal = rows.reduce((s, r) => s + (r.totalAmount || 0), 0);
   const sumPaid = rows.reduce((s, r) => s + (r.amountPaid || 0), 0);
   const outstanding = rows.reduce((s, r) => s + (r.balance || 0), 0);
+  const totalRefunded = rows.reduce((s, r) => s + refundedFor(r), 0);
   const generatedAt = new Date().toLocaleString("en-GB", {day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
 
   const tableRows = rows.map(r => `
     <tr>
       <td class="mono">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
-      <td>${escapeHtml(r.patientName)}</td>
+      <td>${escapeHtml(r.patientName)}${r.isHMO ? " (HMO)" : ""}</td>
       <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
       <td class="mono">${fmtNaira(r.balance)}</td>
-      <td>${r.status}</td>
+      <td>${displayStatus(r)}</td>
       <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
       <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
     </tr>
@@ -516,7 +575,7 @@ $("#printListBtn").addEventListener("click", () => {
         </thead>
         <tbody>${tableRows}</tbody>
       </table>
-      <div class="print-report-summary">Sum of total: ${fmtNaira(sumTotal)} &nbsp;·&nbsp; Sum of paid: ${fmtNaira(sumPaid)} &nbsp;·&nbsp; Sum of balance: ${fmtNaira(outstanding)}</div>
+      <div class="print-report-summary">Net total: ${fmtNaira(sumTotal)} &nbsp;·&nbsp; Net paid: ${fmtNaira(sumPaid)} &nbsp;·&nbsp; Refunded: ${fmtNaira(totalRefunded)} &nbsp;·&nbsp; Balance: ${fmtNaira(outstanding)}</div>
     </div>
   `;
   window.print();
@@ -533,6 +592,15 @@ function openDetail(id){
           <span class="amt">${fmtNaira(p.amount)}</span>
         </div>`).join("")
     : '<div class="hint">No payments logged yet.</div>';
+  const refundsHtml = (rec.refunds || []).length
+    ? rec.refunds.map(rf => `
+        <div class="payment-hist-item refund-item">
+          <span>${fmtDate(rf.date)} · ${Number(rf.targetPercent || 0)}% refund · ${escapeHtml(rf.issuedBy || "superadmin")}</span>
+          <span class="amt">-${fmtNaira(rf.amount)}</span>
+        </div>`).join("")
+    : '<div class="hint">No refunds issued.</div>';
+  const grossPaid = grossPaidFor(rec);
+  const refundedAmount = refundedFor(rec);
 
   $("#detailBody").innerHTML = `
     <dl class="kv-grid" style="margin-bottom:18px;">
@@ -543,18 +611,24 @@ function openDetail(id){
       <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
       <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
       <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
+      <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">HMO</span>' : "Standard"}</dd>
       <dt>Tests</dt><dd>${(rec.tests||[]).map(t => `${escapeHtml(t.name)} (${fmtNaira(t.price)})`).join(", ")}</dd>
-      <dt>Total</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
-      <dt>Paid</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
+      ${refundedAmount > 0 ? `<dt>Original total</dt><dd class="mono">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + refundedAmount))}</dd>` : ""}
+      <dt>${refundedAmount > 0 ? "Net total" : "Total"}</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
+      <dt>Gross paid</dt><dd class="mono">${fmtNaira(grossPaid)}</dd>
+      <dt>Refunded</dt><dd class="mono">${fmtNaira(refundedAmount)}</dd>
+      <dt>Net paid</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
       <dt>Balance</dt><dd class="mono">${fmtNaira(rec.balance)}</dd>
-      <dt>Status</dt><dd><span class="status-pill status-${rec.status}">${rec.status}</span></dd>
+      <dt>Status</dt><dd><span class="status-pill status-${statusClass(rec)}">${displayStatus(rec)}</span></dd>
       <dt>Pledge date</dt><dd>${rec.pledgeDate ? fmtDate(rec.pledgeDate) : "—"}</dd>
       <dt>Recorded by</dt><dd>${escapeHtml(rec.recordedByName || rec.recordedBy || "—")}</dd>
       <dt>Notes</dt><dd>${rec.notes ? escapeHtml(rec.notes) : "—"}</dd>
     </dl>
     <div style="font-weight:600;margin-bottom:8px;">Payment history</div>
     ${paymentsHtml}
-    ${rec.balance > 0 ? `
+    <div style="font-weight:600;margin:16px 0 8px;">Refund history</div>
+    ${refundsHtml}
+    ${rec.balance > 0 && refundPercentFor(rec) === 0 ? `
       <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--line);">
         <div style="font-weight:600;margin-bottom:10px;">Log a new payment</div>
         <div class="field-row">
@@ -570,18 +644,73 @@ function openDetail(id){
         <button class="btn btn-primary btn-small" id="addPaymentBtn">Log payment</button>
       </div>
     ` : ""}
-    <div style="margin-top:18px;display:flex;gap:10px;">
+    <div style="margin-top:18px;display:flex;gap:10px;flex-wrap:wrap;">
       <button class="btn btn-ghost btn-small" id="reprintBtn">Print receipt (2 copies)</button>
+      ${currentRole === "superadmin" && grossPaid > 0 ? `
+        <button class="btn btn-warning btn-small" id="refund75Btn" ${refundPercentFor(rec) >= 75 ? "disabled" : ""}>Refund 75%</button>
+        <button class="btn btn-danger btn-small" id="refund100Btn" ${refundPercentFor(rec) >= 100 ? "disabled" : ""}>Refund 100%</button>
+      ` : ""}
     </div>
   `;
 
   const addBtn = document.getElementById("addPaymentBtn");
   if(addBtn) addBtn.addEventListener("click", () => addPaymentToRecord(rec));
   document.getElementById("reprintBtn").addEventListener("click", () => printReceipt(rec));
+  const refund75Btn = document.getElementById("refund75Btn");
+  const refund100Btn = document.getElementById("refund100Btn");
+  if(refund75Btn) refund75Btn.addEventListener("click", () => issueRefund(rec, 75));
+  if(refund100Btn) refund100Btn.addEventListener("click", () => issueRefund(rec, 100));
 
   $("#detailOverlay").classList.add("show");
 }
 $("#detailCloseBtn").addEventListener("click", () => $("#detailOverlay").classList.remove("show"));
+
+async function issueRefund(rec, targetPercent){
+  if(currentRole !== "superadmin"){ toast("Only a super admin can issue refunds", true); return; }
+  const grossPaid = grossPaidFor(rec);
+  if(grossPaid <= 0){ toast("There is no payment to refund", true); return; }
+  const alreadyRefunded = refundedFor(rec);
+  const targetRefund = Math.round(grossPaid * (targetPercent / 100));
+  const refundNow = Math.max(targetRefund - alreadyRefunded, 0);
+  if(refundNow <= 0){ toast(`${targetPercent}% refund has already been reached`, true); return; }
+  const message = targetPercent === 100
+    ? `Issue the remaining ${fmtNaira(refundNow)} and bring this record to a 100% refund?`
+    : `Issue ${fmtNaira(refundNow)} to bring this record to a 75% refund?`;
+  if(!window.confirm(message)) return;
+
+  const originalTotal = Number(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + alreadyRefunded));
+  const newRefunded = targetRefund;
+  const newTotal = Math.max(originalTotal - newRefunded, 0);
+  const newNetPaid = Math.max(grossPaid - newRefunded, 0);
+  const newBalance = Math.max(newTotal - newNetPaid, 0);
+  const now = new Date().toISOString();
+  const refunds = [...(rec.refunds || []), {
+    amount: refundNow, targetPercent, date: now, issuedBy: currentEmail
+  }];
+
+  try{
+    await updateDoc(doc(db, "records", rec.id), {
+      originalTotalAmount: originalTotal,
+      grossAmountPaid: grossPaid,
+      refundedAmount: newRefunded,
+      refundPercent: targetPercent,
+      refunds,
+      totalAmount: newTotal,
+      amountPaid: newNetPaid,
+      balance: newBalance,
+      status: targetPercent === 100 ? "refunded_100" : "refunded_75",
+      pledgeDate: newBalance > 0 ? (rec.pledgeDate || null) : null,
+      updatedAt: now
+    });
+    toast(`${targetPercent}% refund recorded`);
+    $("#detailOverlay").classList.remove("show");
+    await loadRecords({reset: true});
+    renderRecordsTable();
+  }catch(e){
+    console.error(e);
+    toast("Couldn't record the refund", true);
+  }
+}
 
 async function addPaymentToRecord(rec){
   const amount = Number(document.getElementById("addPayAmount").value) || 0;
@@ -589,6 +718,7 @@ async function addPaymentToRecord(rec){
   const pledge = document.getElementById("addPayPledge").value;
   if(amount <= 0){ toast("Enter a payment amount", true); return; }
   if(!mode){ toast("Select a payment mode", true); return; }
+  if(refundPercentFor(rec) > 0){ toast("Payments cannot be added after a refund has been issued", true); return; }
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
   if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
@@ -597,13 +727,13 @@ async function addPaymentToRecord(rec){
   const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
   try{
     await updateDoc(doc(db, "records", rec.id), {
-      amountPaid: newPaid, balance: newBalance, status,
+      grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
       pledgeDate: newBalance > 0 ? pledge : null,
       payments, updatedAt: new Date().toISOString()
     });
     toast("Payment logged");
     $("#detailOverlay").classList.remove("show");
-    await loadRecords();
+    await loadRecords({reset: true});
     renderRecordsTable();
   }catch(e){
     console.error(e);
@@ -623,13 +753,15 @@ function receiptHtml(rec, copyLabel){
         <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
         <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
       </div>
+      ${rec.isHMO ? `<div class="record-flag hmo-flag">HMO RECORD</div>` : ""}
       <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
       ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
       <div class="receipt-field"><span class="k">Payment mode</span><span>${escapeHtml(paymentModeText)}</span></div>
       <div class="receipt-tests">${testsRows}</div>
       <div class="receipt-totals">
-        <div class="row"><span>Total</span><span class="v">${fmtNaira(rec.totalAmount)}</span></div>
-        <div class="row"><span>Paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
+        ${refundedFor(rec) > 0 ? `<div class="row"><span>Original total</span><span class="v">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + refundedFor(rec)))}</span></div><div class="row"><span>Refunded (${refundPercentFor(rec)}%)</span><span class="v">-${fmtNaira(refundedFor(rec))}</span></div>` : ""}
+        <div class="row"><span>${refundedFor(rec) > 0 ? "Net total" : "Total"}</span><span class="v">${fmtNaira(rec.totalAmount)}</span></div>
+        <div class="row"><span>Net paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
         <div class="row bold"><span>Balance</span><span class="v">${fmtNaira(rec.balance)}</span></div>
       </div>
       ${rec.balance > 0 ? `<div class="receipt-pledge">Balance of ${fmtNaira(rec.balance)} pledged for ${fmtDate(rec.pledgeDate)}</div>` : ""}
