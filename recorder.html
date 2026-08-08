@@ -132,14 +132,10 @@
           </div>
         </div>
 
-        <div class="field-row" id="pledgeRow" style="display:none;">
+        <div class="field-row" id="balanceRow" style="display:none;">
           <div class="field">
             <label for="balanceDisplay">Balance</label>
             <input type="text" id="balanceDisplay" class="mono" disabled style="background:#F0F2F1;">
-          </div>
-          <div class="field">
-            <label for="pledgeDate">Pledged payment date</label>
-            <input type="date" id="pledgeDate">
           </div>
         </div>
 
@@ -321,10 +317,10 @@ function recomputeBalanceUI(){
   const paid = Number($("#amountPaid").value) || 0;
   const balance = Math.max(total - paid, 0);
   if(balance > 0 && total > 0){
-    $("#pledgeRow").style.display = "grid";
+    $("#balanceRow").style.display = "grid";
     $("#balanceDisplay").value = fmtNaira(balance);
   } else {
-    $("#pledgeRow").style.display = "none";
+    $("#balanceRow").style.display = "none";
   }
 }
 $("#amountPaid").addEventListener("input", recomputeBalanceUI);
@@ -339,8 +335,8 @@ function resetNewRecordForm(){
   $("#lmpDate").value = ""; $("#hospitalReferrer").value = ""; $("#referrerPhone").value = ""; $("#officerName").value = "";
   $("#isHmo").checked = false;
   $("#amountPaid").value = ""; $("#paymentMode").value = "";
-  $("#pledgeDate").value = ""; $("#notes").value = "";
-  $("#pledgeRow").style.display = "none";
+  $("#notes").value = "";
+  $("#balanceRow").style.display = "none";
 }
 
 /* ---------------- save new record ---------------- */
@@ -369,7 +365,6 @@ async function saveNewRecord(){
   const total = currentTotal();
   let amountPaid = Number($("#amountPaid").value) || 0;
   const paymentMode = $("#paymentMode").value;
-  const pledgeDate = $("#pledgeDate").value;
   const notes = $("#notes").value.trim();
 
   if(!patientName){ toast("Enter the patient's name", true); return; }
@@ -381,7 +376,6 @@ async function saveNewRecord(){
   if(amountPaid > total) amountPaid = total;
   if(amountPaid > 0 && !paymentMode){ toast("Select a payment mode", true); return; }
   const balance = Math.max(total - amountPaid, 0);
-  if(balance > 0 && !pledgeDate){ toast("Add a pledged payment date for the balance", true); return; }
   if(!window.confirm(`Save this record for ${patientName}?`)) return;
 
   const status = balance <= 0 ? "paid" : (amountPaid > 0 ? "partial" : "unpaid");
@@ -394,7 +388,6 @@ async function saveNewRecord(){
     hospitalReferrer, referrerPhone, officerName, isHMO,
     tests: selectedTests.map(t => ({name: t.name, price: Number(t.price || 0), standardPrice: Number(t.standardPrice || t.price || 0)})),
     originalTotalAmount: total, totalAmount: total, grossAmountPaid: amountPaid, amountPaid, refundedAmount: 0, refunds: [], balance, status,
-    pledgeDate: balance > 0 ? pledgeDate : null,
     notes, payments,
     recordedBy: currentUser.email,
     recordedByName: currentUser.displayName,
@@ -480,7 +473,6 @@ function receiptHtml(rec, copyLabel){
         <div class="row"><span>Paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
         <div class="row bold"><span>Balance</span><span class="v">${fmtNaira(rec.balance)}</span></div>
       </div>
-      ${rec.balance > 0 ? `<div class="receipt-pledge">Balance of ${fmtNaira(rec.balance)} pledged for ${fmtDate(rec.pledgeDate)}</div>` : ""}
       <div class="receipt-signature">
         <div class="sig-name">${escapeHtml(rec.recordedByName || rec.recordedBy || "")}</div>
         <div class="sig-line"></div>
@@ -579,7 +571,6 @@ function renderLookupResult(rec){
         <dt>Paid so far</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
         <dt>Balance</dt><dd class="mono">${fmtNaira(rec.balance)}</dd>
         <dt>Status</dt><dd><span class="status-pill status-${Number(rec.refundPercent || 0) ? "refunded" : rec.status}">${Number(rec.refundPercent || 0) ? `refunded ${rec.refundPercent}%` : rec.status}</span></dd>
-        <dt>Pledge date</dt><dd>${rec.pledgeDate ? fmtDate(rec.pledgeDate) : "—"}</dd>
       </dl>
       <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
         <button class="btn btn-secondary" id="printFullInfoBtn">Print full info</button>
@@ -596,7 +587,6 @@ function renderLookupResult(rec){
               </select>
             </div>
           </div>
-          <div class="field" id="payPledgeField"><label>New pledge date (if balance remains)</label><input type="date" id="payPledge"></div>
           <button class="btn btn-primary" id="submitPaymentBtn">Log payment &amp; print receipt</button>
         </div>
       ` : `<div class="hint">${Number(rec.refundPercent || 0) ? `This record has a ${rec.refundPercent}% refund. Additional payments are disabled.` : "This receipt is fully paid — nothing left to log."}</div>`}
@@ -612,27 +602,23 @@ function renderLookupResult(rec){
 async function addPaymentToRecord(rec){
   const amount = Number(document.getElementById("payAmount").value) || 0;
   const mode = document.getElementById("payMode").value;
-  const pledge = document.getElementById("payPledge").value;
   if(Number(rec.refundPercent || 0) > 0){ toast("Payments cannot be added after a refund has been issued", true); return; }
   if(amount <= 0){ toast("Enter a payment amount", true); return; }
   if(!mode){ toast("Select a payment mode", true); return; }
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
-  if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
   if(!window.confirm(`Log a payment of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
   const status = newBalance <= 0 ? "paid" : "partial";
   const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
   const updated = {
     ...rec,
     grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
-    pledgeDate: newBalance > 0 ? pledge : null,
     payments, updatedAt: new Date().toISOString()
   };
   try{
     await updateDoc(doc(db, "records", rec.id), {
       grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
-      pledgeDate: newBalance > 0 ? pledge : null,
-      payments, updatedAt: new Date().toISOString()
+        payments, updatedAt: new Date().toISOString()
     });
     toast("Payment logged");
     printReceipt(updated);

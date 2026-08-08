@@ -84,7 +84,7 @@
             <thead>
               <tr>
                 <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
-                <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Pledge</th><th>Recorded by</th>
+                <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Recorded by</th>
               </tr>
             </thead>
             <tbody id="recordsBody"></tbody>
@@ -460,15 +460,11 @@ function renderStats(){
   const total = records.length;
   const outstanding = records.reduce((s, r) => s + (r.balance || 0), 0);
   const today = todayISO();
-  const dueToday = records.filter(r => r.balance > 0 && r.pledgeDate === today).length;
-  const overdue = records.filter(r => r.balance > 0 && r.pledgeDate && r.pledgeDate < today).length;
   const refunded = records.reduce((s, r) => s + refundedFor(r), 0);
   $("#statRow").innerHTML = `
     <div class="stat-box"><div class="num">${total}</div><div class="lbl">Loaded records</div></div>
     <div class="stat-box"><div class="num">${fmtNaira(outstanding)}</div><div class="lbl">Outstanding balance</div></div>
     <div class="stat-box"><div class="num">${fmtNaira(refunded)}</div><div class="lbl">Refunded</div></div>
-    <div class="stat-box"><div class="num">${dueToday}</div><div class="lbl">Pledges due today</div></div>
-    <div class="stat-box"><div class="num">${overdue}</div><div class="lbl">Overdue pledges</div></div>
   `;
 }
 function renderFilteredSums(rows){
@@ -500,7 +496,6 @@ function renderRecordsTable(){
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
       <td class="mono">${fmtNaira(r.balance)}</td>
       <td><span class="status-pill status-${statusClass(r)}">${displayStatus(r)}</span></td>
-      <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
       <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
     </tr>
   `).join("");
@@ -555,7 +550,6 @@ $("#printListBtn").addEventListener("click", () => {
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
       <td class="mono">${fmtNaira(r.balance)}</td>
       <td>${displayStatus(r)}</td>
-      <td>${r.pledgeDate ? fmtDate(r.pledgeDate) : "—"}</td>
       <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
     </tr>
   `).join("");
@@ -570,7 +564,7 @@ $("#printListBtn").addEventListener("click", () => {
         <thead>
           <tr>
             <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
-            <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Pledge</th><th>Recorded by</th>
+            <th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Recorded by</th>
           </tr>
         </thead>
         <tbody>${tableRows}</tbody>
@@ -620,7 +614,6 @@ function openDetail(id){
       <dt>Net paid</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
       <dt>Balance</dt><dd class="mono">${fmtNaira(rec.balance)}</dd>
       <dt>Status</dt><dd><span class="status-pill status-${statusClass(rec)}">${displayStatus(rec)}</span></dd>
-      <dt>Pledge date</dt><dd>${rec.pledgeDate ? fmtDate(rec.pledgeDate) : "—"}</dd>
       <dt>Recorded by</dt><dd>${escapeHtml(rec.recordedByName || rec.recordedBy || "—")}</dd>
       <dt>Notes</dt><dd>${rec.notes ? escapeHtml(rec.notes) : "—"}</dd>
     </dl>
@@ -640,7 +633,6 @@ function openDetail(id){
             </select>
           </div>
         </div>
-        <div class="field" id="addPayPledgeField"><label>New pledge date (if balance remains)</label><input type="date" id="addPayPledge"></div>
         <button class="btn btn-primary btn-small" id="addPaymentBtn">Log payment</button>
       </div>
     ` : ""}
@@ -699,7 +691,6 @@ async function issueRefund(rec, targetPercent){
       amountPaid: newNetPaid,
       balance: newBalance,
       status: targetPercent === 100 ? "refunded_100" : "refunded_75",
-      pledgeDate: newBalance > 0 ? (rec.pledgeDate || null) : null,
       updatedAt: now
     });
     toast(`${targetPercent}% refund recorded`);
@@ -715,20 +706,17 @@ async function issueRefund(rec, targetPercent){
 async function addPaymentToRecord(rec){
   const amount = Number(document.getElementById("addPayAmount").value) || 0;
   const mode = document.getElementById("addPayMode").value;
-  const pledge = document.getElementById("addPayPledge").value;
   if(amount <= 0){ toast("Enter a payment amount", true); return; }
   if(!mode){ toast("Select a payment mode", true); return; }
   if(refundPercentFor(rec) > 0){ toast("Payments cannot be added after a refund has been issued", true); return; }
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
-  if(newBalance > 0 && !pledge){ toast("Add a pledged date for the remaining balance", true); return; }
   if(!window.confirm(`Log a payment of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
   const status = newBalance <= 0 ? "paid" : "partial";
   const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
   try{
     await updateDoc(doc(db, "records", rec.id), {
       grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
-      pledgeDate: newBalance > 0 ? pledge : null,
       payments, updatedAt: new Date().toISOString()
     });
     toast("Payment logged");
@@ -764,7 +752,6 @@ function receiptHtml(rec, copyLabel){
         <div class="row"><span>Net paid</span><span class="v">${fmtNaira(rec.amountPaid)}</span></div>
         <div class="row bold"><span>Balance</span><span class="v">${fmtNaira(rec.balance)}</span></div>
       </div>
-      ${rec.balance > 0 ? `<div class="receipt-pledge">Balance of ${fmtNaira(rec.balance)} pledged for ${fmtDate(rec.pledgeDate)}</div>` : ""}
       <div class="receipt-signature">
         <div class="sig-name">${escapeHtml(rec.recordedByName || rec.recordedBy || "")}</div>
         <div class="sig-line"></div>
