@@ -58,7 +58,7 @@
 
         <div class="field-row">
           <div class="field">
-            <label for="patientAge">Age</label>
+            <label for="patientAge">Age <span style="text-transform:none;font-weight:400;">(optional)</span></label>
             <input type="number" id="patientAge" min="0" max="150" step="1" placeholder="e.g. 32">
           </div>
           <div class="field">
@@ -73,9 +73,9 @@
         </div>
 
         <div class="field-row">
-          <div class="field">
+          <div class="field" id="lmpField" style="display:none;">
             <label for="lmpDate">LMP (Last Menstrual Period) <span style="text-transform:none;font-weight:400;">(optional)</span></label>
-            <input type="date" id="lmpDate">
+            <input type="text" id="lmpDate" placeholder="Enter LMP">
           </div>
           <div class="field">
             <label for="hospitalReferrer">Hospital / referrer name <span style="text-transform:none;font-weight:400;">(optional)</span></label>
@@ -97,9 +97,9 @@
         <div class="hmo-toggle-row">
           <label class="hmo-check" for="isHmo">
             <input type="checkbox" id="isHmo">
-            <span>HMO patient</span>
+            <span>Discounted</span>
           </label>
-          <div class="hint">When checked, enter the HMO-approved price for each selected test instead of using the standard diagnostic price.</div>
+          <div class="hint">When checked, enter the discounted price for each selected test instead of using the standard diagnostic price.</div>
         </div>
 
         <div class="field test-search-wrap">
@@ -241,6 +241,12 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
   });
 });
 
+$("#patientSex").addEventListener("change", () => {
+  const isFemale = $("#patientSex").value === "Female";
+  $("#lmpField").style.display = isFemale ? "" : "none";
+  if(!isFemale) $("#lmpDate").value = "";
+});
+
 /* ---------------- diagnostics / test search ---------------- */
 async function loadDiagnostics(){
   const snap = await getDocs(collection(db, "diagnostics"));
@@ -254,7 +260,7 @@ testSearchInput.addEventListener("input", () => {
   if(!q){ testResultsBox.classList.remove("show"); testResultsBox.innerHTML = ""; return; }
   const matches = diagnostics.filter(t => t.name.toLowerCase().includes(q) && !selectedTests.some(s => s.id === t.id)).slice(0, 30);
   testResultsBox.innerHTML = matches.length ? matches.map(t => `
-    <div class="test-result-item" data-id="${t.id}"><span>${escapeHtml(t.name)}</span><span class="price mono">${isHmoRecord() ? "Enter HMO price" : fmtNaira(t.price)}</span></div>
+    <div class="test-result-item" data-id="${t.id}"><span>${escapeHtml(t.name)}</span><span class="price mono">${isHmoRecord() ? "Enter discounted price" : fmtNaira(t.price)}</span></div>
   `).join("") : '<div class="test-result-empty">No matching tests. Ask an admin to add it under "Manage tests".</div>';
   testResultsBox.querySelectorAll(".test-result-item").forEach(el => {
     el.addEventListener("click", () => {
@@ -281,7 +287,7 @@ function renderChips(){
   $("#chipList").innerHTML = selectedTests.map((t, idx) => hmo ? `
     <span class="chip hmo-price-chip">
       <span>${escapeHtml(t.name)}</span>
-      <label class="hmo-price-entry">₦<input type="number" min="0" step="1" data-price-idx="${idx}" value="${Number(t.price || 0) || ""}" placeholder="HMO price"></label>
+      <label class="hmo-price-entry">₦<input type="number" min="0" step="1" data-price-idx="${idx}" value="${Number(t.price || 0) || ""}" placeholder="Discounted price"></label>
       <button data-idx="${idx}" aria-label="Remove ${escapeHtml(t.name)}">&times;</button>
     </span>
   ` : `
@@ -332,7 +338,7 @@ function resetNewRecordForm(){
   renderChips();
   $("#patientName").value = ""; $("#patientPhone").value = "";
   $("#patientAge").value = ""; $("#patientSex").value = "";
-  $("#lmpDate").value = ""; $("#hospitalReferrer").value = ""; $("#referrerPhone").value = ""; $("#officerName").value = "";
+  $("#lmpDate").value = ""; $("#lmpField").style.display = "none"; $("#hospitalReferrer").value = ""; $("#referrerPhone").value = ""; $("#officerName").value = "";
   $("#isHmo").checked = false;
   $("#amountPaid").value = ""; $("#paymentMode").value = "";
   $("#notes").value = "";
@@ -351,11 +357,15 @@ async function nextReceiptNo(){
   return "DX-" + String(num).padStart(6, "0");
 }
 
+let isSavingRecord = false;
+let isLoggingPayment = false;
+
 async function saveNewRecord(){
+  if(isSavingRecord) return;
   const patientName = $("#patientName").value.trim();
   const patientPhone = $("#patientPhone").value.trim();
   const patientAgeRaw = $("#patientAge").value.trim();
-  const patientAge = Number(patientAgeRaw);
+  const patientAge = patientAgeRaw === "" ? null : Number(patientAgeRaw);
   const patientSex = $("#patientSex").value;
   const lmpDate = $("#lmpDate").value || null;
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
@@ -368,33 +378,39 @@ async function saveNewRecord(){
   const notes = $("#notes").value.trim();
 
   if(!patientName){ toast("Enter the patient's name", true); return; }
-  if(!patientAgeRaw || !Number.isFinite(patientAge) || patientAge < 0 || patientAge > 150){ toast("Enter a valid age", true); return; }
+  if(patientAgeRaw && (!Number.isFinite(patientAge) || patientAge < 0 || patientAge > 150)){ toast("Enter a valid age", true); return; }
   if(!patientSex){ toast("Select the patient's sex", true); return; }
   if(!officerName){ toast("Enter the officer's name", true); return; }
   if(selectedTests.length === 0){ toast("Select at least one diagnostic test", true); return; }
-  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter an HMO price for every selected test", true); return; }
+  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a discounted price for every selected test", true); return; }
   if(amountPaid > total) amountPaid = total;
   if(amountPaid > 0 && !paymentMode){ toast("Select a payment mode", true); return; }
   const balance = Math.max(total - amountPaid, 0);
   if(!window.confirm(`Save this record for ${patientName}?`)) return;
 
-  const status = balance <= 0 ? "paid" : (amountPaid > 0 ? "partial" : "unpaid");
-  const receiptNo = await nextReceiptNo();
-  const nowIso = new Date().toISOString();
-  const payments = amountPaid > 0 ? [{amount: amountPaid, mode: paymentMode, date: nowIso, note: "Initial payment"}] : [];
-
-  const data = {
-    receiptNo, patientName, patientPhone, patientAge, patientSex, lmpDate,
-    hospitalReferrer, referrerPhone, officerName, isHMO,
-    tests: selectedTests.map(t => ({name: t.name, price: Number(t.price || 0), standardPrice: Number(t.standardPrice || t.price || 0)})),
-    originalTotalAmount: total, totalAmount: total, grossAmountPaid: amountPaid, amountPaid, refundedAmount: 0, refunds: [], balance, status,
-    notes, payments,
-    recordedBy: currentUser.email,
-    recordedByName: currentUser.displayName,
-    createdAt: nowIso, updatedAt: nowIso
-  };
+  isSavingRecord = true;
+  const saveBtn = $("#saveRecordBtn");
+  const originalSaveText = saveBtn.textContent;
+  saveBtn.disabled = true;
+  saveBtn.textContent = "Saving…";
 
   try{
+    const status = balance <= 0 ? "paid" : (amountPaid > 0 ? "partial" : "unpaid");
+    const receiptNo = await nextReceiptNo();
+    const nowIso = new Date().toISOString();
+    const payments = amountPaid > 0 ? [{amount: amountPaid, mode: paymentMode, date: nowIso, note: "Initial payment"}] : [];
+
+    const data = {
+      receiptNo, patientName, patientPhone, patientAge, patientSex, lmpDate,
+      hospitalReferrer, referrerPhone, officerName, isHMO,
+      tests: selectedTests.map(t => ({name: t.name, price: Number(t.price || 0), standardPrice: Number(t.standardPrice || t.price || 0)})),
+      originalTotalAmount: total, totalAmount: total, grossAmountPaid: amountPaid, amountPaid, refundedAmount: 0, refunds: [], balance, status,
+      notes, payments,
+      recordedBy: currentUser.email,
+      recordedByName: currentUser.displayName,
+      createdAt: nowIso, updatedAt: nowIso
+    };
+
     await setDoc(doc(db, "records", receiptNo), data);
     toast("Record saved — " + receiptNo);
     printReceipt(data);
@@ -402,6 +418,10 @@ async function saveNewRecord(){
   }catch(e){
     console.error(e);
     toast("Couldn't save the record. Check your connection.", true);
+  }finally{
+    isSavingRecord = false;
+    saveBtn.disabled = false;
+    saveBtn.textContent = originalSaveText;
   }
 }
 
@@ -411,7 +431,7 @@ function printEnteredFullInfo(){
   const patientName = $("#patientName").value.trim();
   const patientPhone = $("#patientPhone").value.trim();
   const patientAgeRaw = $("#patientAge").value.trim();
-  const patientAge = Number(patientAgeRaw);
+  const patientAge = patientAgeRaw === "" ? null : Number(patientAgeRaw);
   const patientSex = $("#patientSex").value;
   const lmpDate = $("#lmpDate").value || null;
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
@@ -421,11 +441,11 @@ function printEnteredFullInfo(){
   const notes = $("#notes").value.trim();
 
   if(!patientName){ toast("Enter the patient's name", true); return; }
-  if(!patientAgeRaw || !Number.isFinite(patientAge) || patientAge < 0 || patientAge > 150){ toast("Enter a valid age", true); return; }
+  if(patientAgeRaw && (!Number.isFinite(patientAge) || patientAge < 0 || patientAge > 150)){ toast("Enter a valid age", true); return; }
   if(!patientSex){ toast("Select the patient's sex", true); return; }
   if(!officerName){ toast("Enter the officer's name", true); return; }
   if(selectedTests.length === 0){ toast("Select at least one diagnostic test", true); return; }
-  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter an HMO price for every selected test", true); return; }
+  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a discounted price for every selected test", true); return; }
 
   const preview = {
     receiptNo: "NOT SAVED",
@@ -462,7 +482,7 @@ function receiptHtml(rec, copyLabel){
         <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
         <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
       </div>
-      ${rec.isHMO ? `<div class="record-flag hmo-flag">HMO RECORD</div>` : ""}
+      ${rec.isHMO ? `<div class="record-flag hmo-flag">DISCOUNTED RECORD</div>` : ""}
       <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
       ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
       <div class="receipt-field"><span class="k">Payment mode</span><span>${escapeHtml(paymentModeText)}</span></div>
@@ -505,13 +525,13 @@ function fullInfoHtml(rec){
         </div>
         <div class="meta"><strong>${escapeHtml(rec.receiptNo || "")}</strong><br>${fmtDate(rec.createdAt)}</div>
       </div>
-      ${rec.isHMO ? `<div class="record-flag hmo-flag full-info-flag">HMO RECORD</div>` : ""}
+      ${rec.isHMO ? `<div class="record-flag hmo-flag full-info-flag">DISCOUNTED RECORD</div>` : ""}
       <div class="full-info-grid">
         <div><span>Patient name</span><strong>${escapeHtml(rec.patientName || "—")}</strong></div>
         <div><span>Phone</span><strong>${escapeHtml(rec.patientPhone || "—")}</strong></div>
         <div><span>Age</span><strong>${rec.patientAge ?? "—"}</strong></div>
         <div><span>Sex</span><strong>${escapeHtml(rec.patientSex || "—")}</strong></div>
-        <div><span>LMP (Last Menstrual Period)</span><strong>${rec.lmpDate ? fmtDate(rec.lmpDate) : "—"}</strong></div>
+        <div><span>LMP (Last Menstrual Period)</span><strong>${escapeHtml(rec.lmpDate || "—")}</strong></div>
         <div><span>Hospital / referrer</span><strong>${escapeHtml(rec.hospitalReferrer || "—")}</strong></div>
         <div><span>Referrer phone number</span><strong>${escapeHtml(rec.referrerPhone || "—")}</strong></div>
         <div class="wide"><span>Officer's name</span><strong>${escapeHtml(rec.officerName || "—")}</strong></div>
@@ -565,7 +585,7 @@ function renderLookupResult(rec){
         <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
         <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
         <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
-        <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">HMO</span>' : "Standard"}</dd>
+        <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">DISCOUNTED</span>' : "Standard"}</dd>
         ${Number(rec.refundedAmount || 0) > 0 ? `<dt>Original total</dt><dd class="mono">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + Number(rec.refundedAmount || 0)))}</dd><dt>Refunded</dt><dd class="mono">${fmtNaira(rec.refundedAmount)}</dd>` : ""}
         <dt>${Number(rec.refundedAmount || 0) > 0 ? "Net total" : "Total"}</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
         <dt>Paid so far</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
@@ -600,6 +620,8 @@ function renderLookupResult(rec){
 }
 
 async function addPaymentToRecord(rec){
+  if(isLoggingPayment) return;
+
   const amount = Number(document.getElementById("payAmount").value) || 0;
   const mode = document.getElementById("payMode").value;
   if(Number(rec.refundPercent || 0) > 0){ toast("Payments cannot be added after a refund has been issued", true); return; }
@@ -608,17 +630,28 @@ async function addPaymentToRecord(rec){
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
   if(!window.confirm(`Log a payment of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
+
+  isLoggingPayment = true;
+  const submitBtn = document.getElementById("submitPaymentBtn");
+  const originalPaymentText = submitBtn ? submitBtn.textContent : "";
+  if(submitBtn){
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Saving payment…";
+  }
+
   const status = newBalance <= 0 ? "paid" : "partial";
-  const payments = [...(rec.payments || []), {amount, mode, date: new Date().toISOString(), note: ""}];
+  const paymentTime = new Date().toISOString();
+  const payments = [...(rec.payments || []), {amount, mode, date: paymentTime, note: ""}];
   const updated = {
     ...rec,
     grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
-    payments, updatedAt: new Date().toISOString()
+    payments, updatedAt: paymentTime
   };
+
   try{
     await updateDoc(doc(db, "records", rec.id), {
       grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
-        payments, updatedAt: new Date().toISOString()
+      payments, updatedAt: paymentTime
     });
     toast("Payment logged");
     printReceipt(updated);
@@ -627,6 +660,12 @@ async function addPaymentToRecord(rec){
   }catch(e){
     console.error(e);
     toast("Couldn't save the payment", true);
+  }finally{
+    isLoggingPayment = false;
+    if(submitBtn && document.body.contains(submitBtn)){
+      submitBtn.disabled = false;
+      submitBtn.textContent = originalPaymentText;
+    }
   }
 }
 </script>

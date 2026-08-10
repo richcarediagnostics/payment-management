@@ -447,7 +447,7 @@ function filteredRecords(){
     if(to && r.createdAt.slice(0,10) > to) return false;
     if(term){
       const hay = [
-        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo, r.notes, r.status, displayStatus(r), r.isHMO ? "HMO" : "standard", r.recordedBy, r.recordedByName,
+        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate, r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo, r.notes, r.status, displayStatus(r), r.isHMO ? "discounted" : "standard", r.recordedBy, r.recordedByName,
         ...(r.tests || []).map(t => t.name),
         ...(r.payments || []).map(p => p.mode)
       ].join(" ").toLowerCase();
@@ -490,7 +490,7 @@ function renderRecordsTable(){
     <tr class="row-click" data-id="${r.id}">
       <td class="rid">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
-      <td>${escapeHtml(r.patientName)}${r.isHMO ? ' <span class="record-flag hmo-flag">HMO</span>' : ""}</td>
+      <td>${escapeHtml(r.patientName)}${r.isHMO ? ' <span class="record-flag hmo-flag">DISCOUNTED</span>' : ""}</td>
       <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
@@ -544,7 +544,7 @@ $("#printListBtn").addEventListener("click", () => {
     <tr>
       <td class="mono">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
-      <td>${escapeHtml(r.patientName)}${r.isHMO ? " (HMO)" : ""}</td>
+      <td>${escapeHtml(r.patientName)}${r.isHMO ? " (DISCOUNTED)" : ""}</td>
       <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
@@ -601,11 +601,11 @@ function openDetail(id){
       <dt>Patient</dt><dd>${escapeHtml(rec.patientName)}</dd>
       <dt>Phone</dt><dd>${rec.patientPhone ? escapeHtml(rec.patientPhone) : "—"}</dd>
       <dt>Age / Sex</dt><dd>${rec.patientAge ?? "—"} / ${escapeHtml(rec.patientSex || "—")}</dd>
-      <dt>LMP</dt><dd>${rec.lmpDate ? fmtDate(rec.lmpDate) : "—"}</dd>
+      <dt>LMP</dt><dd>${escapeHtml(rec.lmpDate || "—")}</dd>
       <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
       <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
       <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
-      <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">HMO</span>' : "Standard"}</dd>
+      <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">DISCOUNTED</span>' : "Standard"}</dd>
       <dt>Tests</dt><dd>${(rec.tests||[]).map(t => `${escapeHtml(t.name)} (${fmtNaira(t.price)})`).join(", ")}</dd>
       ${refundedAmount > 0 ? `<dt>Original total</dt><dd class="mono">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + refundedAmount))}</dd>` : ""}
       <dt>${refundedAmount > 0 ? "Net total" : "Total"}</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
@@ -741,7 +741,7 @@ function receiptHtml(rec, copyLabel){
         <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
         <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
       </div>
-      ${rec.isHMO ? `<div class="record-flag hmo-flag">HMO RECORD</div>` : ""}
+      ${rec.isHMO ? `<div class="record-flag hmo-flag">DISCOUNTED RECORD</div>` : ""}
       <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
       ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
       <div class="receipt-field"><span class="k">Payment mode</span><span>${escapeHtml(paymentModeText)}</span></div>
