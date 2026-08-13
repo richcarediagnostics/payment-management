@@ -196,6 +196,9 @@ const RECORDS_PAGE_SIZE = 50;
 let lastRecordDoc = null;
 let hasMoreRecords = true;
 let recordsLoading = false;
+let databaseSearchCache = null;
+let databaseSearchLoading = false;
+let searchDebounceTimer = null;
 let databaseStats = {
   totalRecords: 0,
   totalAmount: 0,
@@ -467,14 +470,65 @@ async function loadRecords({reset = false} = {}){
     updateRecordsPagination();
   }
 }
+async function ensureDatabaseSearchCache(){
+  if(databaseSearchCache) return databaseSearchCache;
+  if(databaseSearchLoading) return null;
+
+  databaseSearchLoading = true;
+  updateRecordsPagination();
+
+  try{
+    const snap = await getDocs(query(collection(db, "records"), orderBy("createdAt", "desc")));
+    databaseSearchCache = snap.docs.map(d => ({id: d.id, ...d.data()}));
+    return databaseSearchCache;
+  }catch(e){
+    console.error("Couldn't search the full database", e);
+    toast("Couldn't search the full database", true);
+    return null;
+  }finally{
+    databaseSearchLoading = false;
+    updateRecordsPagination();
+  }
+}
+
+function searchIsActive(){
+  return $("#searchInput").value.trim().length > 0;
+}
+
+function recordsSourceForCurrentView(){
+  return searchIsActive() && databaseSearchCache ? databaseSearchCache : records;
+}
+
 function updateRecordsPagination(){
   const btn = $("#loadMoreRecordsBtn");
   const info = $("#recordsPageInfo");
   if(!btn || !info) return;
-  info.textContent = databaseStats.totalRecords
-    ? `Showing ${records.length} of ${databaseStats.totalRecords} record${databaseStats.totalRecords === 1 ? "" : "s"}`
-    : (records.length ? `${records.length} record${records.length === 1 ? "" : "s"} loaded` : "No records");
-  btn.style.display = hasMoreRecords ? "inline-flex" : "none";
+
+  if(searchIsActive()){
+    btn.style.display = "none";
+    if(databaseSearchLoading){
+      info.textContent = "Searching database…";
+    }else if(databaseSearchCache){
+      const count = filteredRecords().length;
+      info.textContent = count
+        ? `${count} search result${count === 1 ? "" : "s"}`
+        : "No matching records";
+    }else{
+      info.textContent = "Search the database";
+    }
+    return;
+  }
+
+  const allLoaded = !hasMoreRecords || (databaseStats.totalRecords && records.length >= databaseStats.totalRecords);
+  if(allLoaded && databaseStats.totalRecords){
+    info.textContent = `All ${databaseStats.totalRecords} record${databaseStats.totalRecords === 1 ? "" : "s"} loaded`;
+  }else{
+    info.textContent = databaseStats.totalRecords
+      ? `Showing ${records.length} of ${databaseStats.totalRecords} record${databaseStats.totalRecords === 1 ? "" : "s"}`
+      : (records.length ? `${records.length} record${records.length === 1 ? "" : "s"} loaded` : "No records");
+  }
+
+  btn.style.display = hasMoreRecords && !allLoaded ? "inline-flex" : "none";
   btn.disabled = recordsLoading;
   btn.textContent = recordsLoading ? "Loading more…" : "Load more records";
 }
@@ -483,7 +537,7 @@ function filteredRecords(){
   const status = $("#statusFilter").value;
   const from = $("#dateFrom").value;
   const to = $("#dateTo").value;
-  return records.filter(r => {
+  return recordsSourceForCurrentView().filter(r => {
     if(status !== "all"){
       if(status === "refunded_75" && refundPercentFor(r) !== 75) return false;
       else if(status === "refunded_100" && refundPercentFor(r) !== 100) return false;
@@ -545,17 +599,44 @@ function renderRecordsTable(){
   body.querySelectorAll(".row-click").forEach(row => {
     row.addEventListener("click", () => openDetail(row.dataset.id));
   });
+  updateRecordsPagination();
 }
-["#searchInput", "#statusFilter", "#dateFrom", "#dateTo"].forEach(sel => {
-  $(sel).addEventListener("input", renderRecordsTable);
-  $(sel).addEventListener("change", renderRecordsTable);
+$("#searchInput").addEventListener("input", () => {
+  clearTimeout(searchDebounceTimer);
+  const term = $("#searchInput").value.trim();
+
+  if(!term){
+    renderRecordsTable();
+    updateRecordsPagination();
+    return;
+  }
+
+  searchDebounceTimer = setTimeout(async () => {
+    await ensureDatabaseSearchCache();
+    renderRecordsTable();
+    updateRecordsPagination();
+  }, 300);
+});
+
+["#statusFilter", "#dateFrom", "#dateTo"].forEach(sel => {
+  $(sel).addEventListener("input", () => {
+    renderRecordsTable();
+    updateRecordsPagination();
+  });
+  $(sel).addEventListener("change", () => {
+    renderRecordsTable();
+    updateRecordsPagination();
+  });
 });
 $("#refreshRecordsBtn").addEventListener("click", async () => {
+  databaseSearchCache = null;
   await Promise.all([
     loadRecords({reset: true}),
     loadDatabaseStats()
   ]);
+  if(searchIsActive()) await ensureDatabaseSearchCache();
   renderRecordsTable();
+  updateRecordsPagination();
   toast("Records refreshed");
 });
 $("#loadMoreRecordsBtn").addEventListener("click", async () => {
@@ -622,7 +703,8 @@ $("#printListBtn").addEventListener("click", () => {
 });
 
 function openDetail(id){
-  const rec = records.find(r => r.id === id);
+  const rec = records.find(r => r.id === id)
+    || (databaseSearchCache || []).find(r => r.id === id);
   if(!rec) return;
   $("#detailTitle").textContent = rec.receiptNo + " — " + rec.patientName;
   const paymentsHtml = (rec.payments || []).length
@@ -741,6 +823,7 @@ async function issueRefund(rec, targetPercent){
     });
     toast(`${targetPercent}% refund recorded`);
     $("#detailOverlay").classList.remove("show");
+    databaseSearchCache = null;
     await Promise.all([
       loadRecords({reset: true}),
       loadDatabaseStats()
@@ -770,6 +853,7 @@ async function addPaymentToRecord(rec){
     });
     toast("Payment logged");
     $("#detailOverlay").classList.remove("show");
+    databaseSearchCache = null;
     await Promise.all([
       loadRecords({reset: true}),
       loadDatabaseStats()
