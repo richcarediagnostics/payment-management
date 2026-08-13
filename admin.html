@@ -179,7 +179,7 @@ import { db, getSecondaryAuth } from "./firebase-config.js";
 import { requireRole, logout } from "./auth-guard.js";
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc,
-  query, orderBy, limit, startAfter
+  query, orderBy, limit, startAfter, getCountFromServer, getAggregateFromServer, sum
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   sendPasswordResetEmail
@@ -196,6 +196,12 @@ const RECORDS_PAGE_SIZE = 50;
 let lastRecordDoc = null;
 let hasMoreRecords = true;
 let recordsLoading = false;
+let databaseStats = {
+  totalRecords: 0,
+  totalAmount: 0,
+  outstanding: 0,
+  refunded: 0
+};
 
 const fmtNaira = (n) => "₦" + Number(n || 0).toLocaleString("en-NG", {maximumFractionDigits:0});
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -243,7 +249,10 @@ function toast(msg, isErr){
   }
 
   await loadClinicName();
-  await loadRecords({reset: true});
+  await Promise.all([
+    loadRecords({reset: true}),
+    loadDatabaseStats()
+  ]);
   renderRecordsTable();
   if(role === "superadmin"){
     await loadDiagnostics();
@@ -397,6 +406,41 @@ $("#bulkImportBtn").addEventListener("click", async () => {
 });
 
 /* ---------------- records: load / filter / render / detail ---------------- */
+async function loadDatabaseStats(){
+  try{
+    const recordsRef = collection(db, "records");
+
+    // Run each aggregation separately. This avoids a composite-index
+    // requirement for aggregating several different fields together, and
+    // older records that do not yet contain refundedAmount will not prevent
+    // the other totals from being calculated.
+    const [countSnap, totalSnap, balanceSnap, refundedSnap] = await Promise.all([
+      getCountFromServer(recordsRef),
+      getAggregateFromServer(recordsRef, {
+        value: sum("totalAmount")
+      }),
+      getAggregateFromServer(recordsRef, {
+        value: sum("balance")
+      }),
+      getAggregateFromServer(recordsRef, {
+        value: sum("refundedAmount")
+      })
+    ]);
+
+    databaseStats = {
+      totalRecords: Number(countSnap.data().count || 0),
+      totalAmount: Number(totalSnap.data().value || 0),
+      outstanding: Number(balanceSnap.data().value || 0),
+      refunded: Number(refundedSnap.data().value || 0)
+    };
+
+    updateRecordsPagination();
+  }catch(e){
+    console.error("Couldn't load database totals", e);
+    toast("Couldn't load database totals", true);
+  }
+}
+
 async function loadRecords({reset = false} = {}){
   if(recordsLoading || (!reset && !hasMoreRecords)) return;
   recordsLoading = true;
@@ -427,7 +471,9 @@ function updateRecordsPagination(){
   const btn = $("#loadMoreRecordsBtn");
   const info = $("#recordsPageInfo");
   if(!btn || !info) return;
-  info.textContent = records.length ? `${records.length} record${records.length === 1 ? "" : "s"} loaded` : "No records loaded";
+  info.textContent = databaseStats.totalRecords
+    ? `Showing ${records.length} of ${databaseStats.totalRecords} record${databaseStats.totalRecords === 1 ? "" : "s"}`
+    : (records.length ? `${records.length} record${records.length === 1 ? "" : "s"} loaded` : "No records");
   btn.style.display = hasMoreRecords ? "inline-flex" : "none";
   btn.disabled = recordsLoading;
   btn.textContent = recordsLoading ? "Loading more…" : "Load more records";
@@ -457,14 +503,11 @@ function filteredRecords(){
   });
 }
 function renderStats(){
-  const total = records.length;
-  const outstanding = records.reduce((s, r) => s + (r.balance || 0), 0);
-  const today = todayISO();
-  const refunded = records.reduce((s, r) => s + refundedFor(r), 0);
   $("#statRow").innerHTML = `
-    <div class="stat-box"><div class="num">${total}</div><div class="lbl">Loaded records</div></div>
-    <div class="stat-box"><div class="num">${fmtNaira(outstanding)}</div><div class="lbl">Outstanding balance</div></div>
-    <div class="stat-box"><div class="num">${fmtNaira(refunded)}</div><div class="lbl">Refunded</div></div>
+    <div class="stat-box"><div class="num">${databaseStats.totalRecords}</div><div class="lbl">Total records</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(databaseStats.totalAmount)}</div><div class="lbl">Total amount</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(databaseStats.outstanding)}</div><div class="lbl">Outstanding balance</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(databaseStats.refunded)}</div><div class="lbl">Refunded</div></div>
   `;
 }
 function renderFilteredSums(rows){
@@ -508,7 +551,10 @@ function renderRecordsTable(){
   $(sel).addEventListener("change", renderRecordsTable);
 });
 $("#refreshRecordsBtn").addEventListener("click", async () => {
-  await loadRecords({reset: true});
+  await Promise.all([
+    loadRecords({reset: true}),
+    loadDatabaseStats()
+  ]);
   renderRecordsTable();
   toast("Records refreshed");
 });
@@ -695,7 +741,10 @@ async function issueRefund(rec, targetPercent){
     });
     toast(`${targetPercent}% refund recorded`);
     $("#detailOverlay").classList.remove("show");
-    await loadRecords({reset: true});
+    await Promise.all([
+      loadRecords({reset: true}),
+      loadDatabaseStats()
+    ]);
     renderRecordsTable();
   }catch(e){
     console.error(e);
@@ -721,7 +770,10 @@ async function addPaymentToRecord(rec){
     });
     toast("Payment logged");
     $("#detailOverlay").classList.remove("show");
-    await loadRecords({reset: true});
+    await Promise.all([
+      loadRecords({reset: true}),
+      loadDatabaseStats()
+    ]);
     renderRecordsTable();
   }catch(e){
     console.error(e);
