@@ -95,11 +95,15 @@
         </div>
 
         <div class="hmo-toggle-row">
+          <label class="hmo-check" for="isDiscount">
+            <input type="checkbox" id="isDiscount">
+            <span>Discount</span>
+          </label>
           <label class="hmo-check" for="isHmo">
             <input type="checkbox" id="isHmo">
-            <span>Discounted</span>
+            <span>HMO</span>
           </label>
-          <div class="hint">When checked, enter the discounted price for each selected test instead of using the standard diagnostic price.</div>
+          <div class="hint">Choose Discount or HMO when the standard diagnostic price should not be used. Enter the applicable price for each selected test.</div>
         </div>
 
         <div class="field test-search-wrap">
@@ -113,23 +117,11 @@
           <span class="amount mono" id="totalAmountDisplay">₦0</span>
         </div>
 
-        <div class="field-row" style="margin-top:20px;">
-          <div class="field">
-            <label for="amountPaid">Amount paid now</label>
-            <input type="number" id="amountPaid" min="0" step="1" placeholder="0">
-            <div class="hint">Leave at 0 if the patient hasn't paid anything yet.</div>
-          </div>
-          <div class="field">
-            <label for="paymentMode">Payment mode</label>
-            <select id="paymentMode">
-              <option value="">— select —</option>
-              <option>Cash</option>
-              <option>Card</option>
-              <option>Bank transfer</option>
-              <option>POS</option>
-              <option>Other</option>
-            </select>
-          </div>
+        <div style="margin-top:20px;">
+          <div style="font-weight:600;margin-bottom:8px;">Payment methods</div>
+          <div class="hint" style="margin-bottom:10px;">Add one or more payment methods. Leave all amounts at 0 if the patient has not paid yet.</div>
+          <div id="initialPayments"></div>
+          <button type="button" class="btn btn-ghost btn-small" id="addInitialPaymentMethodBtn">+ Add another payment method</button>
         </div>
 
         <div class="field-row" id="balanceRow" style="display:none;">
@@ -260,13 +252,13 @@ testSearchInput.addEventListener("input", () => {
   if(!q){ testResultsBox.classList.remove("show"); testResultsBox.innerHTML = ""; return; }
   const matches = diagnostics.filter(t => t.name.toLowerCase().includes(q) && !selectedTests.some(s => s.id === t.id)).slice(0, 30);
   testResultsBox.innerHTML = matches.length ? matches.map(t => `
-    <div class="test-result-item" data-id="${t.id}"><span>${escapeHtml(t.name)}</span><span class="price mono">${isHmoRecord() ? "Enter discounted price" : fmtNaira(t.price)}</span></div>
+    <div class="test-result-item" data-id="${t.id}"><span>${escapeHtml(t.name)}</span><span class="price mono">${usesManualPricing() ? "Enter custom price" : fmtNaira(t.price)}</span></div>
   `).join("") : '<div class="test-result-empty">No matching tests. Ask an admin to add it under "Manage tests".</div>';
   testResultsBox.querySelectorAll(".test-result-item").forEach(el => {
     el.addEventListener("click", () => {
       const t = diagnostics.find(d => d.id === el.dataset.id);
       if(t){
-        selectedTests.push({...t, standardPrice: Number(t.price || 0), price: isHmoRecord() ? 0 : Number(t.price || 0)});
+        selectedTests.push({...t, standardPrice: Number(t.price || 0), price: usesManualPricing() ? 0 : Number(t.price || 0)});
         renderChips();
       }
       testSearchInput.value = "";
@@ -281,13 +273,27 @@ document.addEventListener("click", (e) => {
   if(!e.target.closest(".test-search-wrap")){ testResultsBox.classList.remove("show"); }
 });
 
+function isDiscountRecord(){ return $("#isDiscount").checked; }
 function isHmoRecord(){ return $("#isHmo").checked; }
+function usesManualPricing(){ return isDiscountRecord() || isHmoRecord(); }
+
+function recordTypeFor(rec){
+  if(!rec) return "standard";
+  if(rec.recordType === "hmo" || (rec.isHMO === true && rec.isDiscount === false)) return "hmo";
+  if(rec.recordType === "discount" || rec.isDiscount === true) return "discount";
+  if(rec.isHMO === true && rec.recordType == null && rec.isDiscount == null) return "discount";
+  return "standard";
+}
+function recordTypeLabel(rec){
+  const type = recordTypeFor(rec);
+  return type === "hmo" ? "HMO" : (type === "discount" ? "DISCOUNT" : "Standard");
+}
 function renderChips(){
-  const hmo = isHmoRecord();
-  $("#chipList").innerHTML = selectedTests.map((t, idx) => hmo ? `
+  const manualPricing = usesManualPricing();
+  $("#chipList").innerHTML = selectedTests.map((t, idx) => manualPricing ? `
     <span class="chip hmo-price-chip">
       <span>${escapeHtml(t.name)}</span>
-      <label class="hmo-price-entry">₦<input type="number" min="0" step="1" data-price-idx="${idx}" value="${Number(t.price || 0) || ""}" placeholder="Discounted price"></label>
+      <label class="hmo-price-entry">₦<input type="number" min="0" step="1" data-price-idx="${idx}" value="${Number(t.price || 0) || ""}" placeholder="Price"></label>
       <button data-idx="${idx}" aria-label="Remove ${escapeHtml(t.name)}">&times;</button>
     </span>
   ` : `
@@ -306,21 +312,140 @@ function renderChips(){
   updateTotals();
 }
 function currentTotal(){ return selectedTests.reduce((sum, t) => sum + Number(t.price || 0), 0); }
-$("#isHmo").addEventListener("change", () => {
-  const hmo = isHmoRecord();
+function refreshPricingForRecordType(){
+  const manualPricing = usesManualPricing();
   selectedTests = selectedTests.map(t => {
     const base = diagnostics.find(d => d.id === t.id);
-    return {...t, price: hmo ? 0 : Number(base?.price || t.standardPrice || 0), standardPrice: Number(base?.price || t.standardPrice || 0)};
+    return {
+      ...t,
+      price: manualPricing ? 0 : Number(base?.price || t.standardPrice || 0),
+      standardPrice: Number(base?.price || t.standardPrice || 0)
+    };
   });
   renderChips();
+}
+
+$("#isDiscount").addEventListener("change", () => {
+  if($("#isDiscount").checked) $("#isHmo").checked = false;
+  refreshPricingForRecordType();
 });
+
+$("#isHmo").addEventListener("change", () => {
+  if($("#isHmo").checked) $("#isDiscount").checked = false;
+  refreshPricingForRecordType();
+});
+const BANK_REQUIRED_MODES = new Set(["Bank transfer", "POS"]);
+const BANK_NAMES = ["GTBank", "PalmPay", "OPay", "Moniepoint"];
+function paymentModeNeedsBank(mode){ return BANK_REQUIRED_MODES.has(mode); }
+function paymentDisplay(payment){
+  if(!payment) return "";
+  const mode = payment.bank ? `${payment.mode} (${payment.bank})` : (payment.mode || "");
+  return `${mode}: ${fmtNaira(payment.amount)}`;
+}
+function paymentSummary(rec){
+  return (rec?.payments || []).map(paymentDisplay).filter(Boolean).join(" · ");
+}
+function recordBanks(rec){
+  return [...new Set((rec?.payments || []).map(p => p.bank).filter(Boolean))];
+}
+function paymentRowHtml(prefix, index, maxAmount = ""){
+  const maxAttr = maxAmount !== "" ? ` max="${maxAmount}"` : "";
+  return `
+    <div class="payment-entry-row" data-payment-index="${index}" style="border:1px solid var(--line);border-radius:8px;padding:10px;margin-bottom:10px;">
+      <div class="field-row">
+        <div class="field">
+          <label>Amount</label>
+          <input type="number" class="${prefix}-payment-amount" min="0" step="1"${maxAttr} placeholder="0">
+        </div>
+        <div class="field">
+          <label>Payment mode</label>
+          <select class="${prefix}-payment-mode">
+            <option value="">— select —</option>
+            <option>Cash</option><option>Bank transfer</option><option>POS</option><option>Other</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row ${prefix}-payment-bank-row" style="display:none;">
+        <div class="field">
+          <label>Bank</label>
+          <select class="${prefix}-payment-bank">
+            <option value="">— select bank —</option>
+            ${BANK_NAMES.map(b => `<option>${b}</option>`).join("")}
+          </select>
+        </div>
+      </div>
+      <button type="button" class="btn btn-danger btn-small ${prefix}-remove-payment" style="display:none;">Remove</button>
+    </div>`;
+}
+function wirePaymentEntry(container, prefix, onChange){
+  container.querySelectorAll(`.${prefix}-payment-mode`).forEach(select => {
+    if(select.dataset.wired) return;
+    select.dataset.wired = "1";
+    select.addEventListener("change", () => {
+      const row = select.closest(".payment-entry-row");
+      const bankRow = row.querySelector(`.${prefix}-payment-bank-row`);
+      const bank = row.querySelector(`.${prefix}-payment-bank`);
+      const show = paymentModeNeedsBank(select.value);
+      bankRow.style.display = show ? "grid" : "none";
+      if(!show) bank.value = "";
+      onChange?.();
+    });
+  });
+  container.querySelectorAll(`.${prefix}-payment-amount, .${prefix}-payment-bank`).forEach(input => {
+    if(input.dataset.wired) return;
+    input.dataset.wired = "1";
+    input.addEventListener("input", () => onChange?.());
+    input.addEventListener("change", () => onChange?.());
+  });
+  container.querySelectorAll(`.${prefix}-remove-payment`).forEach(btn => {
+    if(btn.dataset.wired) return;
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", () => {
+      btn.closest(".payment-entry-row").remove();
+      refreshRemovePaymentButtons(container, prefix);
+      onChange?.();
+    });
+  });
+}
+function refreshRemovePaymentButtons(container, prefix){
+  const rows = [...container.querySelectorAll(".payment-entry-row")];
+  rows.forEach(row => {
+    row.querySelector(`.${prefix}-remove-payment`).style.display = rows.length > 1 ? "inline-flex" : "none";
+  });
+}
+function addPaymentEntry(container, prefix, onChange, maxAmount = ""){
+  const index = container.querySelectorAll(".payment-entry-row").length;
+  container.insertAdjacentHTML("beforeend", paymentRowHtml(prefix, index, maxAmount));
+  wirePaymentEntry(container, prefix, onChange);
+  refreshRemovePaymentButtons(container, prefix);
+}
+function collectPaymentEntries(container, prefix){
+  return [...container.querySelectorAll(".payment-entry-row")].map(row => {
+    const amount = Number(row.querySelector(`.${prefix}-payment-amount`).value) || 0;
+    const mode = row.querySelector(`.${prefix}-payment-mode`).value;
+    const bank = row.querySelector(`.${prefix}-payment-bank`).value;
+    return {amount, mode, bank: paymentModeNeedsBank(mode) ? bank : null};
+  }).filter(p => p.amount > 0 || p.mode || p.bank);
+}
+function validatePaymentEntries(entries){
+  for(const p of entries){
+    if(p.amount <= 0) return "Enter an amount for every payment method";
+    if(!p.mode) return "Select a payment mode for every payment amount";
+    if(paymentModeNeedsBank(p.mode) && !p.bank) return "Select the bank for every Bank transfer or POS payment";
+  }
+  return "";
+}
+const initialPaymentsContainer = $("#initialPayments");
+addPaymentEntry(initialPaymentsContainer, "initial", recomputeBalanceUI);
+$("#addInitialPaymentMethodBtn").addEventListener("click", () => addPaymentEntry(initialPaymentsContainer, "initial", recomputeBalanceUI));
+
 function updateTotals(){
   $("#totalAmountDisplay").textContent = fmtNaira(currentTotal());
   recomputeBalanceUI();
 }
 function recomputeBalanceUI(){
   const total = currentTotal();
-  const paid = Number($("#amountPaid").value) || 0;
+  const paid = collectPaymentEntries(initialPaymentsContainer, "initial").reduce((sum, p) => sum + Number(p.amount || 0), 0);
   const balance = Math.max(total - paid, 0);
   if(balance > 0 && total > 0){
     $("#balanceRow").style.display = "grid";
@@ -329,7 +454,6 @@ function recomputeBalanceUI(){
     $("#balanceRow").style.display = "none";
   }
 }
-$("#amountPaid").addEventListener("input", recomputeBalanceUI);
 $("#resetFormBtn").addEventListener("click", () => {
   if(window.confirm("Clear all entries in this form?")) resetNewRecordForm();
 });
@@ -339,8 +463,9 @@ function resetNewRecordForm(){
   $("#patientName").value = ""; $("#patientPhone").value = "";
   $("#patientAge").value = ""; $("#patientSex").value = "";
   $("#lmpDate").value = ""; $("#lmpField").style.display = "none"; $("#hospitalReferrer").value = ""; $("#referrerPhone").value = ""; $("#officerName").value = "";
-  $("#isHmo").checked = false;
-  $("#amountPaid").value = ""; $("#paymentMode").value = "";
+  $("#isDiscount").checked = false; $("#isHmo").checked = false;
+  initialPaymentsContainer.innerHTML = "";
+  addPaymentEntry(initialPaymentsContainer, "initial", recomputeBalanceUI);
   $("#notes").value = "";
   $("#balanceRow").style.display = "none";
 }
@@ -371,10 +496,13 @@ async function saveNewRecord(){
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
   const referrerPhone = $("#referrerPhone").value.trim();
   const officerName = $("#officerName").value.trim();
+  const isDiscount = isDiscountRecord();
   const isHMO = isHmoRecord();
+  const recordType = isHMO ? "hmo" : (isDiscount ? "discount" : "standard");
   const total = currentTotal();
-  let amountPaid = Number($("#amountPaid").value) || 0;
-  const paymentMode = $("#paymentMode").value;
+  const initialPaymentEntries = collectPaymentEntries(initialPaymentsContainer, "initial");
+  let amountPaid = initialPaymentEntries.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+  const paymentValidationError = validatePaymentEntries(initialPaymentEntries);
   const notes = $("#notes").value.trim();
 
   if(!patientName){ toast("Enter the patient's name", true); return; }
@@ -382,9 +510,9 @@ async function saveNewRecord(){
   if(!patientSex){ toast("Select the patient's sex", true); return; }
   if(!officerName){ toast("Enter the officer's name", true); return; }
   if(selectedTests.length === 0){ toast("Select at least one diagnostic test", true); return; }
-  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a discounted price for every selected test", true); return; }
-  if(amountPaid > total) amountPaid = total;
-  if(amountPaid > 0 && !paymentMode){ toast("Select a payment mode", true); return; }
+  if((isDiscount || isHMO) && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a price for every selected test", true); return; }
+  if(paymentValidationError){ toast(paymentValidationError, true); return; }
+  if(amountPaid > total){ toast("Combined payment amounts cannot be more than the total due", true); return; }
   const balance = Math.max(total - amountPaid, 0);
   if(!window.confirm(`Save this record for ${patientName}?`)) return;
 
@@ -398,11 +526,17 @@ async function saveNewRecord(){
     const status = balance <= 0 ? "paid" : (amountPaid > 0 ? "partial" : "unpaid");
     const receiptNo = await nextReceiptNo();
     const nowIso = new Date().toISOString();
-    const payments = amountPaid > 0 ? [{amount: amountPaid, mode: paymentMode, date: nowIso, note: "Initial payment"}] : [];
+    const payments = initialPaymentEntries.map((p, idx) => ({
+      amount: p.amount,
+      mode: p.mode,
+      bank: p.bank,
+      date: nowIso,
+      note: idx === 0 ? "Initial payment" : "Initial split payment"
+    }));
 
     const data = {
       receiptNo, patientName, patientPhone, patientAge, patientSex, lmpDate,
-      hospitalReferrer, referrerPhone, officerName, isHMO,
+      hospitalReferrer, referrerPhone, officerName, isDiscount, isHMO, recordType,
       tests: selectedTests.map(t => ({name: t.name, price: Number(t.price || 0), standardPrice: Number(t.standardPrice || t.price || 0)})),
       originalTotalAmount: total, totalAmount: total, grossAmountPaid: amountPaid, amountPaid, refundedAmount: 0, refunds: [], balance, status,
       notes, payments,
@@ -437,7 +571,9 @@ function printEnteredFullInfo(){
   const hospitalReferrer = $("#hospitalReferrer").value.trim();
   const referrerPhone = $("#referrerPhone").value.trim();
   const officerName = $("#officerName").value.trim();
+  const isDiscount = isDiscountRecord();
   const isHMO = isHmoRecord();
+  const recordType = isHMO ? "hmo" : (isDiscount ? "discount" : "standard");
   const notes = $("#notes").value.trim();
 
   if(!patientName){ toast("Enter the patient's name", true); return; }
@@ -445,7 +581,7 @@ function printEnteredFullInfo(){
   if(!patientSex){ toast("Select the patient's sex", true); return; }
   if(!officerName){ toast("Enter the officer's name", true); return; }
   if(selectedTests.length === 0){ toast("Select at least one diagnostic test", true); return; }
-  if(isHMO && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a discounted price for every selected test", true); return; }
+  if((isDiscount || isHMO) && selectedTests.some(t => Number(t.price || 0) <= 0)){ toast("Enter a price for every selected test", true); return; }
 
   const preview = {
     receiptNo: "NOT SAVED",
@@ -457,7 +593,7 @@ function printEnteredFullInfo(){
     hospitalReferrer,
     referrerPhone,
     officerName,
-    isHMO,
+    isDiscount, isHMO, recordType,
     tests: selectedTests.map(t => ({name: t.name, price: Number(t.price || 0)})),
     notes,
     recordedBy: currentUser?.email || "",
@@ -474,18 +610,19 @@ $("#printEnteredFullInfoBtn").addEventListener("click", printEnteredFullInfo);
 function receiptHtml(rec, copyLabel){
   const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
   const testsRows = rec.tests.map(t => `<div class="row"><span>${escapeHtml(t.name)}</span><span class="p">${fmtNaira(t.price)}</span></div>`).join("");
-  const paymentModes = [...new Set((rec.payments || []).map(payment => payment.mode).filter(Boolean))];
-  const paymentModeText = paymentModes.length ? paymentModes.join(", ") : "No payment recorded";
+  const paymentModeText = paymentSummary(rec) || "No payment recorded";
+  const bankText = recordBanks(rec).join(", ");
   return `
     <div class="receipt">
       <div class="receipt-top">
         <div><div class="copy-tag">${escapeHtml(copyLabel)}</div><div class="clinic">${escapeHtml(clinicName)}</div></div>
         <div class="rid">${rec.receiptNo}<span class="date">${fmtDate(rec.createdAt)}</span></div>
       </div>
-      ${rec.isHMO ? `<div class="record-flag hmo-flag">DISCOUNTED RECORD</div>` : ""}
+      ${recordTypeFor(rec) !== "standard" ? `<div class="record-flag hmo-flag">${recordTypeLabel(rec)} RECORD</div>` : ""}
       <div class="receipt-field"><span class="k">Patient</span><span>${escapeHtml(rec.patientName)}</span></div>
       ${rec.patientPhone ? `<div class="receipt-field"><span class="k">Phone</span><span>${escapeHtml(rec.patientPhone)}</span></div>` : ""}
       <div class="receipt-field"><span class="k">Payment mode</span><span>${escapeHtml(paymentModeText)}</span></div>
+      ${bankText ? `<div class="receipt-field"><span class="k">Bank</span><span>${escapeHtml(bankText)}</span></div>` : ""}
       <div class="receipt-tests">${testsRows}</div>
       <div class="receipt-totals">
         ${Number(rec.refundedAmount || 0) > 0 ? `<div class="row"><span>Original total</span><span class="v">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + Number(rec.refundedAmount || 0)))}</span></div><div class="row"><span>Refunded</span><span class="v">-${fmtNaira(rec.refundedAmount)}</span></div>` : ""}
@@ -525,7 +662,7 @@ function fullInfoHtml(rec){
         </div>
         <div class="meta"><strong>${escapeHtml(rec.receiptNo || "")}</strong><br>${fmtDate(rec.createdAt)}</div>
       </div>
-      ${rec.isHMO ? `<div class="record-flag hmo-flag full-info-flag">DISCOUNTED RECORD</div>` : ""}
+      ${recordTypeFor(rec) !== "standard" ? `<div class="record-flag hmo-flag full-info-flag">${recordTypeLabel(rec)} RECORD</div>` : ""}
       <div class="full-info-grid">
         <div><span>Patient name</span><strong>${escapeHtml(rec.patientName || "—")}</strong></div>
         <div><span>Phone</span><strong>${escapeHtml(rec.patientPhone || "—")}</strong></div>
@@ -585,7 +722,8 @@ function renderLookupResult(rec){
         <dt>Hospital / referrer</dt><dd>${escapeHtml(rec.hospitalReferrer || "—")}</dd>
         <dt>Referrer phone</dt><dd>${escapeHtml(rec.referrerPhone || "—")}</dd>
         <dt>Officer</dt><dd>${escapeHtml(rec.officerName || "—")}</dd>
-        <dt>Record type</dt><dd>${rec.isHMO ? '<span class="record-flag hmo-flag">DISCOUNTED</span>' : "Standard"}</dd>
+        <dt>Record type</dt><dd>${recordTypeFor(rec) !== "standard" ? `<span class="record-flag hmo-flag">${recordTypeLabel(rec)}</span>` : "Standard"}</dd>
+        <dt>Payments</dt><dd>${escapeHtml(paymentSummary(rec) || "No payment recorded")}</dd>
         ${Number(rec.refundedAmount || 0) > 0 ? `<dt>Original total</dt><dd class="mono">${fmtNaira(rec.originalTotalAmount ?? (Number(rec.totalAmount || 0) + Number(rec.refundedAmount || 0)))}</dd><dt>Refunded</dt><dd class="mono">${fmtNaira(rec.refundedAmount)}</dd>` : ""}
         <dt>${Number(rec.refundedAmount || 0) > 0 ? "Net total" : "Total"}</dt><dd class="mono">${fmtNaira(rec.totalAmount)}</dd>
         <dt>Paid so far</dt><dd class="mono">${fmtNaira(rec.amountPaid)}</dd>
@@ -598,21 +736,21 @@ function renderLookupResult(rec){
       ${rec.balance > 0 && !Number(rec.refundPercent || 0) ? `
         <div style="border-top:1px solid var(--line);padding-top:14px;">
           <div style="font-weight:600;margin-bottom:10px;">Log a new payment</div>
-          <div class="field-row">
-            <div class="field"><label>Amount</label><input type="number" id="payAmount" min="0" max="${rec.balance}" placeholder="0"></div>
-            <div class="field"><label>Mode</label>
-              <select id="payMode">
-                <option value="">— select —</option>
-                <option>Cash</option><option>Card</option><option>Bank transfer</option><option>POS</option><option>Other</option>
-              </select>
-            </div>
-          </div>
-          <button class="btn btn-primary" id="submitPaymentBtn">Log payment &amp; print receipt</button>
+          <div id="lookupPayments"></div>
+          <button type="button" class="btn btn-ghost btn-small" id="addLookupPaymentMethodBtn">+ Add another payment method</button>
+          <button class="btn btn-primary" id="submitPaymentBtn" style="margin-top:10px;">Log payment &amp; print receipt</button>
         </div>
       ` : `<div class="hint">${Number(rec.refundPercent || 0) ? `This record has a ${rec.refundPercent}% refund. Additional payments are disabled.` : "This receipt is fully paid — nothing left to log."}</div>`}
     </div>
   `;
   document.getElementById("printFullInfoBtn")?.addEventListener("click", () => printFullInfo(rec));
+  const lookupPayments = document.getElementById("lookupPayments");
+  if(lookupPayments){
+    addPaymentEntry(lookupPayments, "lookup", null, rec.balance);
+    document.getElementById("addLookupPaymentMethodBtn")?.addEventListener("click", () => {
+      addPaymentEntry(lookupPayments, "lookup", null, rec.balance);
+    });
+  }
   const submitBtn = document.getElementById("submitPaymentBtn");
   if(submitBtn){
     submitBtn.addEventListener("click", () => addPaymentToRecord(rec));
@@ -621,15 +759,19 @@ function renderLookupResult(rec){
 
 async function addPaymentToRecord(rec){
   if(isLoggingPayment) return;
+  const container = document.getElementById("lookupPayments");
+  const entries = collectPaymentEntries(container, "lookup");
+  const validationError = validatePaymentEntries(entries);
+  const amount = entries.reduce((sum, p) => sum + Number(p.amount || 0), 0);
 
-  const amount = Number(document.getElementById("payAmount").value) || 0;
-  const mode = document.getElementById("payMode").value;
   if(Number(rec.refundPercent || 0) > 0){ toast("Payments cannot be added after a refund has been issued", true); return; }
-  if(amount <= 0){ toast("Enter a payment amount", true); return; }
-  if(!mode){ toast("Select a payment mode", true); return; }
+  if(entries.length === 0){ toast("Add at least one payment", true); return; }
+  if(validationError){ toast(validationError, true); return; }
+  if(amount > rec.balance){ toast("Combined payment amounts cannot be more than the outstanding balance", true); return; }
+
   const newPaid = Math.min(rec.amountPaid + amount, rec.totalAmount);
   const newBalance = Math.max(rec.totalAmount - newPaid, 0);
-  if(!window.confirm(`Log a payment of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
+  if(!window.confirm(`Log combined payments of ${fmtNaira(amount)} for receipt ${rec.receiptNo}?`)) return;
 
   isLoggingPayment = true;
   const submitBtn = document.getElementById("submitPaymentBtn");
@@ -641,7 +783,8 @@ async function addPaymentToRecord(rec){
 
   const status = newBalance <= 0 ? "paid" : "partial";
   const paymentTime = new Date().toISOString();
-  const payments = [...(rec.payments || []), {amount, mode, date: paymentTime, note: ""}];
+  const newEntries = entries.map(p => ({...p, date: paymentTime, note: ""}));
+  const payments = [...(rec.payments || []), ...newEntries];
   const updated = {
     ...rec,
     grossAmountPaid: newPaid, amountPaid: newPaid, balance: newBalance, status,
