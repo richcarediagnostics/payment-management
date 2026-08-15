@@ -723,6 +723,87 @@ $("#loadMoreRecordsBtn").addEventListener("click", async () => {
   renderRecordsTable();
 });
 
+function buildPaymentMethodTotals(rows){
+  const methodTotals = new Map();
+  const childTotals = new Map();
+
+  rows.forEach(rec => {
+    (rec.payments || []).forEach(payment => {
+      const mode = String(payment.mode || "Unknown").trim() || "Unknown";
+      const amount = Number(payment.amount || 0);
+
+      methodTotals.set(mode, (methodTotals.get(mode) || 0) + amount);
+
+      if(paymentModeNeedsBank(mode)){
+        const bank = String(payment.bank || "Bank not recorded").trim() || "Bank not recorded";
+        const key = `${mode}|||${bank}`;
+        childTotals.set(key, (childTotals.get(key) || 0) + amount);
+      }
+    });
+  });
+
+  return {methodTotals, childTotals};
+}
+
+function paymentMethodTotalsHtml(rows){
+  const {methodTotals, childTotals} = buildPaymentMethodTotals(rows);
+  if(methodTotals.size === 0){
+    return '<div class="print-payment-summary"><div class="title">Payment method totals</div><div class="empty">No payments recorded.</div></div>';
+  }
+
+  const preferredOrder = ["Cash", "Card", "Bank transfer", "POS", "Other"];
+  const methods = [...methodTotals.keys()].sort((a,b) => {
+    const ai = preferredOrder.indexOf(a);
+    const bi = preferredOrder.indexOf(b);
+    if(ai !== -1 || bi !== -1){
+      if(ai === -1) return 1;
+      if(bi === -1) return -1;
+      return ai - bi;
+    }
+    return a.localeCompare(b);
+  });
+
+  const rowsHtml = methods.map(mode => {
+    const children = [...childTotals.entries()]
+      .filter(([key]) => key.startsWith(`${mode}|||`))
+      .map(([key, amount]) => ({bank: key.split("|||")[1], amount}))
+      .sort((x,y) => x.bank.localeCompare(y.bank));
+
+    return `
+      <div class="print-payment-method">
+        <div class="method-main">
+          <span>${escapeHtml(mode)}</span>
+          <strong>${fmtNaira(methodTotals.get(mode) || 0)}</strong>
+        </div>
+        ${children.length ? `
+          <div class="method-children">
+            ${children.map(child => `
+              <div>
+                <span>${escapeHtml(child.bank)}</span>
+                <strong>${fmtNaira(child.amount)}</strong>
+              </div>
+            `).join("")}
+          </div>
+        ` : ""}
+      </div>
+    `;
+  }).join("");
+
+  const grossPayments = [...methodTotals.values()].reduce((sum, amount) => sum + Number(amount || 0), 0);
+
+  return `
+    <div class="print-payment-summary">
+      <div class="title">Payment method totals</div>
+      <div class="subtitle">Breakdown of payment entries in the records above</div>
+      ${rowsHtml}
+      <div class="payment-grand-total">
+        <span>Total payments collected</span>
+        <strong>${fmtNaira(grossPayments)}</strong>
+      </div>
+    </div>
+  `;
+}
+
 /* ---------------- print the current filtered records list ---------------- */
 $("#printListBtn").addEventListener("click", () => {
   const rows = filteredRecords();
@@ -744,6 +825,7 @@ $("#printListBtn").addEventListener("click", () => {
   const sumPaid = rows.reduce((s, r) => s + (r.amountPaid || 0), 0);
   const outstanding = rows.reduce((s, r) => s + (r.balance || 0), 0);
   const totalRefunded = rows.reduce((s, r) => s + refundedFor(r), 0);
+  const paymentTotalsHtml = paymentMethodTotalsHtml(rows);
   const generatedAt = new Date().toLocaleString("en-GB", {day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
 
   const tableRows = rows.map(r => `
@@ -777,6 +859,7 @@ $("#printListBtn").addEventListener("click", () => {
         </thead>
         <tbody>${tableRows}</tbody>
       </table>
+      ${paymentTotalsHtml}
       <div class="print-report-summary">Net total: ${fmtNaira(sumTotal)} &nbsp;·&nbsp; Net paid: ${fmtNaira(sumPaid)} &nbsp;·&nbsp; Refunded: ${fmtNaira(totalRefunded)} &nbsp;·&nbsp; Balance: ${fmtNaira(outstanding)}</div>
     </div>
   `;

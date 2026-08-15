@@ -299,3 +299,19 @@ table.data .rid{font-family:"IBM Plex Mono",monospace;color:var(--ink-soft);font
 .status-refunded{background:var(--red-tint);color:var(--red);}
 @media(max-width:640px){.hmo-toggle-row{align-items:flex-start;flex-direction:column;gap:6px}.hmo-price-chip{width:100%}.hmo-price-entry{margin-left:auto}}
 .pagination-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 16px;border-top:1px solid var(--line);flex-wrap:wrap;}
+
+
+.print-payment-summary{margin-top:16px;border:1px solid #bbb;border-radius:6px;padding:10px 12px;font-size:11px;}
+.print-payment-summary .title{font-size:12px;font-weight:700;margin-bottom:2px;}
+.print-payment-summary .subtitle{font-size:9.5px;color:#666;margin-bottom:8px;}
+.print-payment-summary .empty{color:#666;}
+.print-payment-method{border-top:1px solid #ddd;padding:6px 0;}
+.print-payment-method:first-of-type{border-top:none;}
+.print-payment-method .method-main,.payment-grand-total,.method-children>div{display:flex;justify-content:space-between;gap:18px;}
+.print-payment-method .method-main{font-weight:600;}
+.print-payment-method .method-children{margin:4px 0 0 14px;padding-left:10px;border-left:2px solid #ddd;color:#555;}
+.print-payment-method .method-children>div{padding:2px 0;font-size:10px;}
+.payment-grand-total{border-top:2px solid #888;margin-top:4px;padding-top:7px;font-weight:700;}
+@media print{
+  .print-payment-summary{break-inside:avoid;page-break-inside:avoid;}
+}
