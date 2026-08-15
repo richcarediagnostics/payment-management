@@ -30,6 +30,7 @@
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab-btn active" data-tab="records" role="tab">Records</button>
+        <button class="tab-btn" data-tab="hmo" role="tab">HMO Records</button>
         <button class="tab-btn" data-tab="tests" role="tab" id="testsTabBtn" style="display:none;">Manage tests</button>
         <button class="tab-btn" data-tab="users" role="tab" id="usersTabBtn" style="display:none;">Manage users</button>
         
@@ -97,6 +98,68 @@
         <div class="pagination-bar" id="recordsPagination">
           <div class="hint" id="recordsPageInfo"></div>
           <button class="btn btn-ghost" id="loadMoreRecordsBtn">Load more records</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ---------- HMO RECORDS ---------- -->
+    <section class="tab-panel" id="panel-hmo">
+      <div class="panel-head">
+        <h2>HMO records</h2>
+        <div class="sub">Browse and search records entered specifically as HMO.</div>
+      </div>
+
+      <div class="stat-row" id="hmoStatRow"></div>
+
+      <div class="filter-bar">
+        <div class="field grow">
+          <label for="hmoSearchInput">Search</label>
+          <input type="text" id="hmoSearchInput" placeholder="Name, phone, receipt no., test...">
+        </div>
+        <div class="field">
+          <label for="hmoStatusFilter">Status</label>
+          <select id="hmoStatusFilter">
+            <option value="all">All</option>
+            <option value="paid">Paid</option>
+            <option value="partial">Partial</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="refunded_75">Refunded 75%</option>
+            <option value="refunded_100">Refunded 100%</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="hmoDateFrom">From</label>
+          <input type="date" id="hmoDateFrom">
+        </div>
+        <div class="field">
+          <label for="hmoDateTo">To</label>
+          <input type="date" id="hmoDateTo">
+        </div>
+        <button class="btn btn-ghost" id="refreshHmoRecordsBtn">Refresh</button>
+        <button class="btn btn-ghost" id="printHmoListBtn">Print list</button>
+      </div>
+
+      <div class="stat-row" id="hmoFilteredSumsRow" style="margin-bottom:16px;"></div>
+
+      <div class="card">
+        <div style="overflow-x:auto;">
+          <table class="data" id="hmoRecordsTable">
+            <thead>
+              <tr>
+                <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+                <th>Total</th><th>Paid</th><th>Balance</th><th>Payment breakdown</th><th>Bank</th><th>Status</th><th>Recorded by</th>
+              </tr>
+            </thead>
+            <tbody id="hmoRecordsBody"></tbody>
+          </table>
+          <div class="empty-state" id="hmoRecordsEmpty" style="display:none;">
+            <div class="display">No HMO records match</div>
+            <div>Try widening your search or clearing the filters.</div>
+          </div>
+        </div>
+        <div class="pagination-bar" id="hmoRecordsPagination">
+          <div class="hint" id="hmoRecordsPageInfo"></div>
+          <button class="btn btn-ghost" id="loadMoreHmoRecordsBtn">Load more records</button>
         </div>
       </div>
     </section>
@@ -179,7 +242,7 @@ import { db, getSecondaryAuth } from "./firebase-config.js";
 import { requireRole, logout } from "./auth-guard.js";
 import {
   collection, addDoc, getDocs, doc, updateDoc, deleteDoc, setDoc, getDoc,
-  query, orderBy, limit, startAfter, getCountFromServer, getAggregateFromServer, sum
+  query, where, orderBy, limit, startAfter, getCountFromServer, getAggregateFromServer, sum
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import {
   sendPasswordResetEmail
@@ -205,6 +268,15 @@ let databaseStats = {
   outstanding: 0,
   refunded: 0
 };
+
+let hmoRecords = [];
+let hmoLastRecordDoc = null;
+let hmoHasMoreRecords = true;
+let hmoRecordsLoading = false;
+let hmoDatabaseCache = null;
+let hmoDatabaseLoading = false;
+let hmoSearchDebounceTimer = null;
+let hmoTotalRecords = 0;
 
 const fmtNaira = (n) => "₦" + Number(n || 0).toLocaleString("en-NG", {maximumFractionDigits:0});
 const todayISO = () => new Date().toISOString().slice(0,10);
@@ -353,6 +425,9 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
     document.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
     document.querySelectorAll(".tab-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + tab));
     if(tab === "users") loadAndRenderUsers();
+    if(tab === "hmo" && hmoRecords.length === 0 && !hmoRecordsLoading){
+      loadHmoRecords({reset:true}).then(renderHmoRecordsTable);
+    }
   });
 });
 
@@ -709,6 +784,7 @@ $("#searchInput").addEventListener("input", () => {
 });
 $("#refreshRecordsBtn").addEventListener("click", async () => {
   databaseSearchCache = null;
+    hmoDatabaseCache = null;
   await Promise.all([
     loadRecords({reset: true}),
     loadDatabaseStats()
@@ -804,7 +880,291 @@ function paymentMethodTotalsHtml(rows){
   `;
 }
 
+
+/* ---------------- HMO records ---------------- */
+function isTrueHmoRecord(rec){
+  return rec?.recordType === "hmo" || (rec?.isHMO === true && rec?.isDiscount === false);
+}
+
+async function loadHmoCount(){
+  try{
+    const q = query(collection(db, "records"), where("recordType", "==", "hmo"));
+    const snap = await getCountFromServer(q);
+    hmoTotalRecords = Number(snap.data().count || 0);
+  }catch(e){
+    console.error("Couldn't load HMO record count", e);
+  }
+}
+
+async function loadHmoRecords({reset=false}={}){
+  if(hmoRecordsLoading || (!reset && !hmoHasMoreRecords)) return;
+  hmoRecordsLoading = true;
+  updateHmoPagination();
+  try{
+    if(reset){
+      hmoRecords = [];
+      hmoLastRecordDoc = null;
+      hmoHasMoreRecords = true;
+      await loadHmoCount();
+    }
+    const constraints = [
+      where("recordType", "==", "hmo"),
+      orderBy("createdAt", "desc")
+    ];
+    if(hmoLastRecordDoc) constraints.push(startAfter(hmoLastRecordDoc));
+    constraints.push(limit(RECORDS_PAGE_SIZE));
+    const snap = await getDocs(query(collection(db, "records"), ...constraints));
+    const next = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    hmoRecords = reset ? next : [...hmoRecords, ...next];
+    hmoLastRecordDoc = snap.docs.length ? snap.docs[snap.docs.length-1] : hmoLastRecordDoc;
+    hmoHasMoreRecords = snap.docs.length === RECORDS_PAGE_SIZE;
+  }catch(e){
+    console.error("Couldn't load HMO records", e);
+    toast("Couldn't load HMO records", true);
+  }finally{
+    hmoRecordsLoading = false;
+    updateHmoPagination();
+  }
+}
+
+function hmoFiltersAreActive(){
+  return $("#hmoSearchInput").value.trim().length > 0
+    || $("#hmoStatusFilter").value !== "all"
+    || $("#hmoDateFrom").value !== ""
+    || $("#hmoDateTo").value !== "";
+}
+
+async function ensureHmoDatabaseCache(){
+  if(hmoDatabaseCache) return hmoDatabaseCache;
+  if(hmoDatabaseLoading) return null;
+  hmoDatabaseLoading = true;
+  updateHmoPagination();
+  try{
+    const snap = await getDocs(query(
+      collection(db, "records"),
+      where("recordType", "==", "hmo"),
+      orderBy("createdAt", "desc")
+    ));
+    hmoDatabaseCache = snap.docs.map(d => ({id:d.id, ...d.data()}));
+    hmoTotalRecords = hmoDatabaseCache.length;
+    return hmoDatabaseCache;
+  }catch(e){
+    console.error("Couldn't search HMO records", e);
+    toast("Couldn't search HMO records", true);
+    return null;
+  }finally{
+    hmoDatabaseLoading = false;
+    updateHmoPagination();
+  }
+}
+
+function hmoSource(){
+  return hmoFiltersAreActive() && hmoDatabaseCache ? hmoDatabaseCache : hmoRecords;
+}
+
+function filteredHmoRecords(){
+  const term = $("#hmoSearchInput").value.trim().toLowerCase();
+  const status = $("#hmoStatusFilter").value;
+  const from = $("#hmoDateFrom").value;
+  const to = $("#hmoDateTo").value;
+
+  return hmoSource().filter(r => {
+    if(!isTrueHmoRecord(r)) return false;
+    if(status !== "all"){
+      if(status === "refunded_75" && refundPercentFor(r) !== 75) return false;
+      else if(status === "refunded_100" && refundPercentFor(r) !== 100) return false;
+      else if(!status.startsWith("refunded_") && r.status !== status) return false;
+    }
+    if(from && r.createdAt.slice(0,10) < from) return false;
+    if(to && r.createdAt.slice(0,10) > to) return false;
+    if(term){
+      const hay = [
+        r.patientName, r.patientPhone, r.patientAge, r.patientSex, r.lmpDate,
+        r.hospitalReferrer, r.referrerPhone, r.officerName, r.receiptNo,
+        r.notes, r.status, displayStatus(r), "hmo", r.recordedBy, r.recordedByName,
+        ...(r.tests || []).map(t => t.name),
+        ...(r.payments || []).flatMap(p => [p.mode, p.bank, p.amount])
+      ].join(" ").toLowerCase();
+      if(!hay.includes(term)) return false;
+    }
+    return true;
+  });
+}
+
+function renderHmoStats(){
+  const source = hmoDatabaseCache || hmoRecords;
+  const totalAmount = source.reduce((s,r)=>s+Number(r.totalAmount||0),0);
+  const paid = source.reduce((s,r)=>s+Number(r.amountPaid||0),0);
+  const balance = source.reduce((s,r)=>s+Number(r.balance||0),0);
+  $("#hmoStatRow").innerHTML = `
+    <div class="stat-box"><div class="num">${hmoTotalRecords || source.length}</div><div class="lbl">HMO records</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(totalAmount)}</div><div class="lbl">Loaded HMO total</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(paid)}</div><div class="lbl">Loaded HMO paid</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(balance)}</div><div class="lbl">Loaded HMO balance</div></div>
+  `;
+}
+
+function renderHmoFilteredSums(rows){
+  const sumTotal = rows.reduce((s,r)=>s+Number(r.totalAmount||0),0);
+  const sumPaid = rows.reduce((s,r)=>s+Number(r.amountPaid||0),0);
+  const sumBalance = rows.reduce((s,r)=>s+Number(r.balance||0),0);
+  const sumRefunded = rows.reduce((s,r)=>s+refundedFor(r),0);
+  $("#hmoFilteredSumsRow").innerHTML = `
+    <div class="stat-box"><div class="num">${rows.length}</div><div class="lbl">Matching records</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumTotal)}</div><div class="lbl">Net total</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumPaid)}</div><div class="lbl">Net paid</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumRefunded)}</div><div class="lbl">Refunded</div></div>
+    <div class="stat-box"><div class="num">${fmtNaira(sumBalance)}</div><div class="lbl">Sum of balance</div></div>
+  `;
+}
+
+function renderHmoRecordsTable(){
+  renderHmoStats();
+  const rows = filteredHmoRecords();
+  renderHmoFilteredSums(rows);
+  const body = $("#hmoRecordsBody");
+  $("#hmoRecordsEmpty").style.display = rows.length ? "none" : "block";
+  body.innerHTML = rows.map(r => `
+    <tr class="row-click" data-id="${r.id}">
+      <td class="rid">${r.receiptNo}</td>
+      <td>${fmtDate(r.createdAt)}</td>
+      <td>${escapeHtml(r.patientName)} <span class="record-flag hmo-flag">HMO</span></td>
+      <td>${(r.tests || []).map(t=>escapeHtml(t.name)).join(", ")}</td>
+      <td class="mono">${fmtNaira(r.totalAmount)}</td>
+      <td class="mono">${fmtNaira(r.amountPaid)}</td>
+      <td class="mono">${fmtNaira(r.balance)}</td>
+      <td>${escapeHtml(paymentSummary(r) || "—")}</td>
+      <td>${escapeHtml(recordBankText(r))}</td>
+      <td><span class="status-pill status-${statusClass(r)}">${displayStatus(r)}</span></td>
+      <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
+    </tr>
+  `).join("");
+  body.querySelectorAll(".row-click").forEach(row=>{
+    row.addEventListener("click",()=>openDetail(row.dataset.id));
+  });
+  updateHmoPagination();
+}
+
+function updateHmoPagination(){
+  const btn=$("#loadMoreHmoRecordsBtn");
+  const info=$("#hmoRecordsPageInfo");
+  if(!btn || !info) return;
+  if(hmoFiltersAreActive()){
+    btn.style.display="none";
+    if(hmoDatabaseLoading) info.textContent="Filtering HMO database…";
+    else if(hmoDatabaseCache){
+      const count=filteredHmoRecords().length;
+      info.textContent=count?`${count} matching HMO record${count===1?"":"s"}`:"No matching HMO records";
+    } else info.textContent="Filtering HMO database…";
+    return;
+  }
+  const allLoaded=!hmoHasMoreRecords || (hmoTotalRecords && hmoRecords.length>=hmoTotalRecords);
+  if(allLoaded && hmoTotalRecords){
+    info.textContent=`All ${hmoTotalRecords} HMO record${hmoTotalRecords===1?"":"s"} loaded`;
+  } else {
+    info.textContent=hmoTotalRecords
+      ? `Showing ${hmoRecords.length} of ${hmoTotalRecords} HMO records`
+      : (hmoRecords.length?`${hmoRecords.length} HMO records loaded`:"No HMO records");
+  }
+  btn.style.display=hmoHasMoreRecords && !allLoaded ? "inline-flex":"none";
+  btn.disabled=hmoRecordsLoading;
+  btn.textContent=hmoRecordsLoading?"Loading more…":"Load more records";
+}
+
+async function applyHmoDatabaseWideFilters(){
+  if(hmoFiltersAreActive()) await ensureHmoDatabaseCache();
+  renderHmoRecordsTable();
+}
+
+$("#hmoSearchInput").addEventListener("input",()=>{
+  clearTimeout(hmoSearchDebounceTimer);
+  if(!hmoFiltersAreActive()){
+    renderHmoRecordsTable();
+    return;
+  }
+  hmoSearchDebounceTimer=setTimeout(applyHmoDatabaseWideFilters,300);
+});
+["#hmoStatusFilter","#hmoDateFrom","#hmoDateTo"].forEach(sel=>{
+  $(sel).addEventListener("change",applyHmoDatabaseWideFilters);
+});
+$("#refreshHmoRecordsBtn").addEventListener("click",async()=>{
+  hmoDatabaseCache=null;
+  await loadHmoRecords({reset:true});
+  if(hmoFiltersAreActive()) await ensureHmoDatabaseCache();
+  renderHmoRecordsTable();
+  toast("HMO records refreshed");
+});
+$("#loadMoreHmoRecordsBtn").addEventListener("click",async()=>{
+  await loadHmoRecords();
+  renderHmoRecordsTable();
+});
+
 /* ---------------- print the current filtered records list ---------------- */
+$("#printHmoListBtn").addEventListener("click", async () => {
+  // When filters are active, ensure the printout represents the entire HMO database,
+  // exactly like the HMO search/filter view rather than only the currently loaded page.
+  if(hmoFiltersAreActive()) await ensureHmoDatabaseCache();
+
+  const rows = filteredHmoRecords();
+  if(rows.length === 0){ toast("No HMO records match the current filters", true); return; }
+
+  const clinicName = $("#clinicNameDisplay").textContent || "Diagnostics Center";
+  const status = $("#hmoStatusFilter").value;
+  const term = $("#hmoSearchInput").value.trim();
+  const from = $("#hmoDateFrom").value;
+  const to = $("#hmoDateTo").value;
+  const filterBits = ["HMO records"];
+  if(term) filterBits.push(`search "${term}"`);
+  if(status !== "all") filterBits.push(`status: ${status}`);
+  if(from) filterBits.push(`from ${fmtDate(from)}`);
+  if(to) filterBits.push(`to ${fmtDate(to)}`);
+  const filterSummary = filterBits.join(" · ");
+
+  const sumTotal = rows.reduce((s, r) => s + Number(r.totalAmount || 0), 0);
+  const sumPaid = rows.reduce((s, r) => s + Number(r.amountPaid || 0), 0);
+  const outstanding = rows.reduce((s, r) => s + Number(r.balance || 0), 0);
+  const totalRefunded = rows.reduce((s, r) => s + refundedFor(r), 0);
+  const paymentTotalsHtml = paymentMethodTotalsHtml(rows);
+  const generatedAt = new Date().toLocaleString("en-GB", {day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit"});
+
+  const tableRows = rows.map(r => `
+    <tr>
+      <td class="mono">${r.receiptNo}</td>
+      <td>${fmtDate(r.createdAt)}</td>
+      <td>${escapeHtml(r.patientName)} (HMO)</td>
+      <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
+      <td class="mono">${fmtNaira(r.totalAmount)}</td>
+      <td class="mono">${fmtNaira(r.amountPaid)}</td>
+      <td class="mono">${fmtNaira(r.balance)}</td>
+      <td>${escapeHtml(paymentSummary(r) || "—")}</td>
+      <td>${escapeHtml(recordBankText(r))}</td>
+      <td>${displayStatus(r)}</td>
+      <td>${escapeHtml(r.recordedByName || r.recordedBy || "—")}</td>
+    </tr>
+  `).join("");
+
+  $("#printArea").innerHTML = `
+    <div class="print-report">
+      <div class="print-report-head">
+        <div class="clinic">${escapeHtml(clinicName)} — HMO Records report</div>
+        <div class="meta">${escapeHtml(filterSummary)} · ${rows.length} record${rows.length === 1 ? "" : "s"} · Generated ${generatedAt}</div>
+      </div>
+      <table class="print-report-table">
+        <thead>
+          <tr>
+            <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+            <th>Total</th><th>Paid</th><th>Balance</th><th>Payment breakdown</th><th>Bank</th><th>Status</th><th>Recorded by</th>
+          </tr>
+        </thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+      ${paymentTotalsHtml}
+      <div class="print-report-summary">Net total: ${fmtNaira(sumTotal)} &nbsp;·&nbsp; Net paid: ${fmtNaira(sumPaid)} &nbsp;·&nbsp; Refunded: ${fmtNaira(totalRefunded)} &nbsp;·&nbsp; Balance: ${fmtNaira(outstanding)}</div>
+    </div>
+  `;
+  window.print();
+});
+
 $("#printListBtn").addEventListener("click", () => {
   const rows = filteredRecords();
   if(rows.length === 0){ toast("No records match the current filters", true); return; }
@@ -868,7 +1228,9 @@ $("#printListBtn").addEventListener("click", () => {
 
 function openDetail(id){
   const rec = records.find(r => r.id === id)
-    || (databaseSearchCache || []).find(r => r.id === id);
+    || (databaseSearchCache || []).find(r => r.id === id)
+    || hmoRecords.find(r => r.id === id)
+    || (hmoDatabaseCache || []).find(r => r.id === id);
   if(!rec) return;
   $("#detailTitle").textContent = rec.receiptNo + " — " + rec.patientName;
   const paymentsHtml = (rec.payments || []).length
