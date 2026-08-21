@@ -140,7 +140,7 @@ input:focus, select:focus, textarea:focus{outline:2px solid var(--teal);outline-
 .filter-bar .field{margin-bottom:0;min-width:160px;flex:1;}
 .filter-bar .field.grow{flex:2;min-width:220px;}
 
-table.data{width:100%;border-collapse:collapse;font-size:13.5px;}
+table.data{width:100%;border-collapse:collapse;font-size:12px;}
 table.data th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.04em;color:var(--ink-soft);padding:8px 12px;border-bottom:1px solid var(--line);}
 table.data td{padding:10px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top;}
 table.data tr.row-click{cursor:pointer;}

@@ -84,7 +84,7 @@
           <table class="data" id="recordsTable">
             <thead>
               <tr>
-                <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+                <th>Receipt</th><th>Date</th><th>Patient</th><th>Hospital / Referrer</th><th>Tests</th>
                 <th>Total</th><th>Paid</th><th>Balance</th><th>Payment breakdown</th><th>Bank</th><th>Status</th><th>Recorded by</th>
               </tr>
             </thead>
@@ -146,7 +146,7 @@
           <table class="data" id="hmoRecordsTable">
             <thead>
               <tr>
-                <th>Receipt</th><th>Date</th><th>Patient</th><th>Tests</th>
+                <th>Receipt</th><th>Date</th><th>Patient</th><th>Hospital/Referrer</th><th>Tests</th>
                 <th>Total</th><th>Paid</th><th>Balance</th><th>Payment breakdown</th><th>Bank</th><th>Status</th><th>Recorded by</th>
               </tr>
             </thead>
@@ -745,6 +745,7 @@ function renderRecordsTable(){
       <td class="rid">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
       <td>${escapeHtml(r.patientName)}${recordTypeFor(r) !== "standard" ? ` <span class="record-flag hmo-flag">${recordTypeLabel(r)}</span>` : ""}</td>
+      <td>${escapeHtml(r.hospitalReferrer)}</td>
       <td>${(r.tests || []).map(t => escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
@@ -1029,6 +1030,7 @@ function renderHmoRecordsTable(){
       <td class="rid">${r.receiptNo}</td>
       <td>${fmtDate(r.createdAt)}</td>
       <td>${escapeHtml(r.patientName)} <span class="record-flag hmo-flag">HMO</span></td>
+      <td>${escapeHtml(r.hospitalReferrer)}</td>
       <td>${(r.tests || []).map(t=>escapeHtml(t.name)).join(", ")}</td>
       <td class="mono">${fmtNaira(r.totalAmount)}</td>
       <td class="mono">${fmtNaira(r.amountPaid)}</td>
